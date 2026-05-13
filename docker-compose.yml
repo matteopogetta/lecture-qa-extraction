@@ -9,7 +9,6 @@ services:
         required: false
     volumes:
       - ./sample_data:/app/sample_data:ro
-      - ./output:/app/output
       - ./tmp:/app/tmp
       - ./artifacts:/app/artifacts
     command: ["--help"]
