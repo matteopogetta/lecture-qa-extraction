@@ -1,1 +1,1 @@
-"""Input handling components."""
+"""Input handling components and transitional compatibility bridges."""
