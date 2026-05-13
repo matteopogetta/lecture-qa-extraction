@@ -1,1 +1,1 @@
-"""Placeholder preprocessing package."""
+"""Preprocessing package and transitional compatibility bridges."""
