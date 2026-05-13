@@ -261,9 +261,11 @@ def run_smoke_pipeline(args: argparse.Namespace, parser: argparse.ArgumentParser
 def run_root_pipeline(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     """Run the official root-based lecture processing pipeline."""
 
-    from core.config import PipelineConfig as LegacyPipelineConfig
-    from core.errors import IngestionError
-    from core.pipeline import LectureProcessingPipeline as LegacyPipeline
+    from lecture_analyzer.core.config import PipelineConfig as LegacyPipelineConfig
+    from lecture_analyzer.core.errors import IngestionError
+    from lecture_analyzer.core.pipeline import (
+        LectureProcessingPipeline as LegacyPipeline,
+    )
 
     input_paths: list[str] = list(args.inputs)
     if not input_paths and args.input_path:

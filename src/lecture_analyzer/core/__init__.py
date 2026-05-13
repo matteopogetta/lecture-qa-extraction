@@ -1,1 +1,1 @@
-"""Core application building blocks."""
+"""Core application building blocks and transitional compatibility bridges."""

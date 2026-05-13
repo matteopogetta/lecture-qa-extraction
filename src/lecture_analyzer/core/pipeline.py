@@ -1,12 +1,19 @@
-"""Bootstrap pipeline orchestration."""
+"""Bootstrap orchestration plus root-pipeline compatibility exports."""
 
 from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
+import sys
 from uuid import uuid4
 
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from core import pipeline as legacy_pipeline
 from lecture_analyzer.core.config import AppConfig
 from lecture_analyzer.core.models import PlaceholderResult, StageResult
 from lecture_analyzer.input.validation import validate_input_path
@@ -73,3 +80,19 @@ class LectureAnalyzerPipeline:
         output_path = output_dir / result.output_filename
         write_result_json(result=result, output_path=output_path)
         return output_path
+
+
+def __getattr__(name: str) -> object:
+    """Expose the legacy root pipeline module through the src package."""
+
+    return getattr(legacy_pipeline, name)
+
+
+__all__ = [
+    "LectureAnalyzerPipeline",
+    *[
+        name
+        for name in dir(legacy_pipeline)
+        if not name.startswith("_")
+    ],
+]

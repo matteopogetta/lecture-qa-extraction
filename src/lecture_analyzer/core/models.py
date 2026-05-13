@@ -1,10 +1,18 @@
-"""Data models for placeholder analysis results."""
+"""Data models for placeholder results and root-pipeline compatibility."""
 
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from pathlib import Path
+import sys
 from typing import Any
+
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from core import models as legacy_models
 
 
 @dataclass(slots=True)
@@ -41,3 +49,20 @@ class PlaceholderResult:
 
         input_name = Path(self.input).stem or "lecture"
         return f"{input_name}_analysis.json"
+
+
+def __getattr__(name: str) -> object:
+    """Expose the legacy root data models through the src package."""
+
+    return getattr(legacy_models, name)
+
+
+__all__ = [
+    "PlaceholderResult",
+    "StageResult",
+    *[
+        name
+        for name in dir(legacy_models)
+        if not name.startswith("_")
+    ],
+]
