@@ -1,0 +1,11 @@
+# Minimal local dependencies for the current repository state.
+#
+# - The installable CLI and smoke mode use only the standard library.
+# - The default test suite imports pytest directly.
+# - The debug Excel exporter tests import openpyxl directly.
+#
+# Heavy optional ML dependencies for the full root pipeline are intentionally
+# not installed here. They should be added only in environments that need
+# those specific branches.
+pytest>=8,<9
+openpyxl>=3.1,<4

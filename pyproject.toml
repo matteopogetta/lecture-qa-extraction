@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lecture-analyzer"
+version = "0.1.0"
+description = "Standalone prototype for lecture media analysis."
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [
+  { name = "ExerPlaza Prototype Team" }
+]
+dependencies = []
+
+[project.optional-dependencies]
+test = [
+  "pytest>=8,<9",
+  "openpyxl>=3.1,<4",
+]
+
+[project.scripts]
+lecture-analyzer = "lecture_analyzer.main:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+python_files = ["test_*.py"]
+testpaths = ["tests"]

@@ -1,0 +1,45 @@
+# macOS and editor files
+.DS_Store
+
+# Python cache and virtual environments
+__pycache__/
+*.py[cod]
+.venv/
+.venv-system/
+.venv*/
+venv/
+
+# Local environment files
+.env
+
+# Tooling caches
+.pytest_cache/
+.mypy_cache/
+
+# Build artifacts
+dist/
+build/
+*.egg-info/
+
+# Runtime output
+output/
+temp/
+tmp/
+artifacts/
+artifacts_*/
+
+# Heavy local media files
+*.mp4
+*.mov
+*.mkv
+*.mp3
+*.wav
+sample_inputs/
+*.xlsx
+~$*.xlsx
+*.lock
+
+# Keep small tracked sample documentation and placeholder
+!sample_data/
+!sample_data/README.md
+!sample_data/example.mp4
