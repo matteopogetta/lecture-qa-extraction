@@ -1,0 +1,35 @@
+{
+  "run_id": "b71dbc31-75d0-4255-ba5c-ad3ae5ece0e6",
+  "status": "placeholder-completed",
+  "input": "/Users/matteopogetta/Documents/ExerPlazaProject/sample_data/example.mp4",
+  "output_directory": "/Users/matteopogetta/Documents/ExerPlazaProject/tmp/cli-smoke-output",
+  "transcription_model": "not-configured",
+  "generated_at": "2026-05-13T19:32:06.456953+00:00",
+  "stages": [
+    {
+      "name": "input_validation",
+      "status": "completed",
+      "message": "Input path exists and is ready for processing."
+    },
+    {
+      "name": "preprocessing",
+      "status": "pending",
+      "message": "Audio extraction is not implemented yet."
+    },
+    {
+      "name": "transcription",
+      "status": "pending",
+      "message": "Transcription backend is not implemented yet."
+    },
+    {
+      "name": "analysis",
+      "status": "pending",
+      "message": "Didactic segmentation is not implemented yet."
+    },
+    {
+      "name": "output_generation",
+      "status": "completed",
+      "message": "Placeholder JSON artifact generated successfully."
+    }
+  ]
+}

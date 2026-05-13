@@ -1,0 +1,146 @@
+Metadata-Version: 2.4
+Name: lecture-analyzer
+Version: 0.1.0
+Summary: Standalone prototype for lecture media analysis.
+Author: ExerPlaza Prototype Team
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+
+# ExerPlaza Lecture Analyzer
+
+## Project overview
+
+ExerPlaza Lecture Analyzer is a standalone Python prototype for transforming
+lecture audio or video into structured, traceable JSON artifacts.
+
+The official pipeline currently lives in the root modules:
+
+- `core/`
+- `input/`
+- `preprocessing/`
+- `transcription/`
+- `analysis/`
+- `output/`
+
+This is the real functional pipeline used by the project today.
+
+## Current repository status
+
+The repository is in a transition phase.
+
+- The root modules contain the real sentence-centric pipeline.
+- `src/lecture_analyzer` is currently a bootstrap/package skeleton and future
+  migration target.
+- The root `main.py` is still the temporary wrapper entry point.
+- Docker is still oriented to the bootstrap/package layout and will be
+  realigned after the src-based migration.
+
+See [docs/repository_status.md](docs/repository_status.md) for the repository
+status summary and [docs/simplification_plan.md](docs/simplification_plan.md)
+for the cleanup and migration plan.
+
+## Real pipeline
+
+The current official target flow is:
+
+`input -> audio normalization -> transcription -> alignment -> sentence reconstruction -> segmentation -> QA extraction -> JSON output`
+
+Key properties:
+
+- audio and video are both accepted as inputs
+- the internal processing pipeline is audio-based after normalization
+- the preferred analysis path is sentence-centric
+- segmentation and QA support controlled fallbacks when richer upstream layers
+  are unavailable
+
+## Reliable commands today
+
+Use the real pipeline through the root wrapper:
+
+```bash
+./.venv-system/bin/python main.py --help
+```
+
+Typical pipeline invocation:
+
+```bash
+./.venv-system/bin/python main.py sample_inputs/SSL1P1.mp4 --output artifacts/session.json
+```
+
+Run the full test suite:
+
+```bash
+./.venv-system/bin/python -m pytest
+```
+
+The installable `lecture-analyzer` entry point still exists, but it currently
+reflects the transitional bootstrap/compatibility layer rather than a fully
+migrated src-based implementation.
+
+## Experimental or transitional areas
+
+The following areas should be treated as transitional, optional, or
+experimental:
+
+- `src/lecture_analyzer` bootstrap/package skeleton
+- Docker and Docker Compose integration
+- diarization
+- semantic QA retrieval and reranking
+- debug Excel export
+- adaptive, windowed, and `both` segmentation modes
+- text-only transcription cache fallback
+- `disable-alignment` compatibility mode
+- `analysis/speaker_role.py`, which remains a placeholder unless integrated
+
+## Local materials and generated artifacts
+
+The repository may contain local or non-essential materials such as:
+
+- `artifacts/`
+- `artifacts_*/`
+- `sample_inputs/`
+- `tmp/`
+- transcription cache sidecars
+- generated `.xlsx` debug files
+
+These files are useful for experimentation and review, but they are not part of
+the core source tree and should not define the project structure.
+
+## Runtime requirements
+
+- Python 3.11 or newer
+- `ffmpeg`
+- `ffprobe`
+
+Depending on enabled branches, the real pipeline may also require:
+
+- WhisperX-compatible runtime dependencies for alignment
+- `pyannote.audio` for diarization
+- `wtpsplit` for the preferred sentence splitter
+- `openpyxl` for debug Excel export
+- semantic-model dependencies for semantic QA branches
+
+## Repository structure
+
+```text
+project-root/
+├── main.py                     # temporary root wrapper
+├── core/                       # current official pipeline
+├── input/
+├── preprocessing/
+├── transcription/
+├── analysis/
+├── output/
+├── src/lecture_analyzer/       # bootstrap/package skeleton, future target
+├── docs/
+├── tests/
+├── pyproject.toml
+├── Dockerfile
+└── docker-compose.yml
+```
+
+## Docker status
+
+The current Docker setup is not yet the canonical execution path for the real
+pipeline. It is still aligned with the bootstrap/package layer and will be
+updated after the src-based migration of the real modules.
