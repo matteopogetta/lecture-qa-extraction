@@ -2,26 +2,26 @@
 
 ## Current source of truth
 
-The official lecture-processing pipeline currently lives in the root modules:
+The official lecture-processing pipeline is now source-owned under
+`src/lecture_analyzer`:
 
-- `core/`
-- `input/`
-- `preprocessing/`
-- `transcription/`
-- `analysis/`
-- `output/`
+- `src/lecture_analyzer/core/`
+- `src/lecture_analyzer/input/`
+- `src/lecture_analyzer/preprocessing/`
+- `src/lecture_analyzer/transcription/`
+- `src/lecture_analyzer/analysis/`
+- `src/lecture_analyzer/output/`
 
 This is the real, functional pipeline used by the project today.
 
-## Bridge migration status
+## Compatibility status
 
-The repository now contains two aligned import surfaces:
+The repository intentionally exposes two aligned import surfaces:
 
-1. The real implementation in the root modules listed above.
-2. A src-based compatibility surface under `src/lecture_analyzer`.
+1. The src-owned implementation under `src/lecture_analyzer`.
+2. Legacy root packages kept as temporary wrappers.
 
-The following src namespaces are now available and intentionally mirror the
-root packages:
+The following public namespaces are available and stable:
 
 - `lecture_analyzer.core.*`
 - `lecture_analyzer.input.*`
@@ -30,44 +30,38 @@ root packages:
 - `lecture_analyzer.analysis.*`
 - `lecture_analyzer.output.*`
 
-These namespaces currently work as compatibility bridges. They expose the real
-root modules without moving the implementation yet.
+The corresponding root imports still work:
 
-## Why root packages still own the implementation
+- `core.*`
+- `input.*`
+- `preprocessing.*`
+- `transcription.*`
+- `analysis.*`
+- `output.*`
 
-The root packages remain the temporary source of truth on purpose:
-
-- they are the runtime path already exercised by the real pipeline
-- they are the implementation path already covered by the full test suite
-- they let the project adopt stable `lecture_analyzer.*` imports before any
-  physical relocation happens
-- they reduce migration risk by separating namespace stabilization from code
-  movement
-
-This means the repository is already src-addressable from the outside while the
-actual implementation still lives in the root packages.
+These root imports are compatibility wrappers only. They should no longer be
+treated as the implementation-owning modules.
 
 ## CLI status
 
-- The root-level `main.py` remains the temporary wrapper entry point.
 - The installable `lecture-analyzer` command is the official CLI.
-- The real processing pipeline is still the one implemented in the root
-  modules.
-- The CLI now routes through the transitional `src/lecture_analyzer` package
-  while keeping the root implementation unchanged.
+- The real processing pipeline now lives in `src/lecture_analyzer`.
+- The root-level `main.py` remains a temporary compatibility wrapper.
+- Smoke mode still uses the lightweight placeholder flow under the same CLI.
 
 ## Docker status
 
-The Docker setup is now aligned with the real project shape at a transitional
-level:
+The Docker setup is aligned with the current repository shape:
 
-- it copies the root implementation packages
+- it copies the src-owned implementation packages
+- it keeps the temporary root wrappers available
 - it installs the `lecture-analyzer` CLI from `src/lecture_analyzer`
 - it supports `lecture-analyzer --help`
 - it supports the temporary smoke mode
 
-It is still transitional because the implementation has not yet been moved
-physically into `src/lecture_analyzer`.
+Docker is still not a promise that every heavy optional ML branch is available
+out of the box. Those branches continue to depend on their specific external
+libraries and models.
 
 ## Local and non-essential materials
 
@@ -95,23 +89,19 @@ flow is:
 
 During this phase:
 
-- keep existing runtime code stable unless there is a clear migration task
-- prefer `lecture_analyzer.*` for new package-facing imports when practical
-- keep `core.*`, `input.*`, `preprocessing.*`, `transcription.*`,
-  `analysis.*`, and `output.*` as the implementation-owning modules until the
-  physical consolidation phase starts
+- prefer `lecture_analyzer.*` for package-facing imports
+- treat root imports as temporary compatibility wrappers
+- keep runtime changes conservative until the wrappers are retired
 
 ## Next migration phase
 
-The next phase is physical consolidation, not another compatibility layer.
-Recommended order:
+The next phase is cleanup after consolidation. Recommended order:
 
-1. `core`
-2. `input`
-3. `preprocessing`
-4. `transcription`
-5. `analysis`
-6. `output`
+1. stabilize the consolidated src-owned packages
+2. keep validating both src and legacy imports during the transition
+3. remove redundant root wrappers package by package
+4. simplify CLI and packaging once the wrappers are retired
+5. prune remaining optional or placeholder branches that are no longer needed
 
-This order keeps the migration aligned with the pipeline flow and lets the
-lowest-level orchestration modules move before the broader downstream layers.
+The project has already completed the physical consolidation step. The main
+remaining work is to reduce temporary compatibility surface area safely.

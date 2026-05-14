@@ -2,12 +2,11 @@
 
 ## A. Official target pipeline
 
-The official target pipeline for this project is the real root-based pipeline:
+The official target pipeline for this project is now the src-owned pipeline:
 
 `input -> audio normalization -> transcription -> alignment -> sentence reconstruction -> segmentation -> QA extraction -> JSON output`
 
-This is the project center that future packaging and src-based migration should
-serve.
+This is the project center that packaging, CLI, and cleanup should now serve.
 
 ## B. Core branches to keep
 
@@ -45,12 +44,13 @@ in later cleanup steps:
 - `analysis/speaker_role.py` if it remains unintegrated
 - heavy `sample_inputs/` media tracked in the repository
 - tracked `artifacts/` and cache artifacts in the repository
-- Docker setup that only reflects the bootstrap-oriented flow
+- legacy root wrappers once downstream imports have been migrated
 
 ## E. Next migration steps
 
-The repository cleanup and bridge phase is now complete. The next steps should
-move from namespace compatibility to physical consolidation.
+Repository cleanup, bridge stabilization, and physical consolidation are now
+complete. The next steps should focus on reducing temporary compatibility
+surface area.
 
 Recommended order for the next repository phases:
 
@@ -58,17 +58,15 @@ Recommended order for the next repository phases:
 2. real pytest coverage as the default expectation
 3. official CLI path aligned to the real pipeline
 4. bridge-based `lecture_analyzer.*` namespace stabilization
-5. physical consolidation of `core` into `src/lecture_analyzer`
-6. physical consolidation of `input` and `preprocessing`
-7. physical consolidation of `transcription`
-8. physical consolidation of `analysis` and `output`
-9. final removal of redundant root-package bridges
-10. Docker and packaging cleanup after consolidation
+5. physical consolidation into `src/lecture_analyzer`
+6. compatibility validation across legacy and src imports
+7. final removal of redundant root-package wrappers
+8. Docker and packaging cleanup after wrapper retirement
 
-## F. Bridge phase outcome
+## F. Consolidation outcome
 
-The bridge phase now exposes all major namespaces under `lecture_analyzer.*`
-without changing the runtime source of truth:
+The project now exposes all major namespaces under `lecture_analyzer.*`, and
+those namespaces are the implementation-owning source of truth:
 
 - `lecture_analyzer.core.*`
 - `lecture_analyzer.input.*`
@@ -77,5 +75,6 @@ without changing the runtime source of truth:
 - `lecture_analyzer.analysis.*`
 - `lecture_analyzer.output.*`
 
-This creates a stable import surface for downstream code and packaging while
-keeping the real implementation in the root packages until the next phase.
+The legacy root packages still exist only to preserve compatibility during the
+transition. They should be treated as temporary wrappers rather than as real
+implementation modules.

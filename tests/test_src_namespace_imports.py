@@ -1,4 +1,4 @@
-"""Summary import checks for the bridge-based src namespace surface."""
+"""Summary import checks for the consolidated src namespace surface."""
 
 from __future__ import annotations
 
@@ -7,10 +7,10 @@ import unittest
 
 
 class SrcNamespaceImportTests(unittest.TestCase):
-    """Ensure all bridge-phase top-level src namespaces are importable."""
+    """Ensure all top-level src namespaces remain importable."""
 
     def test_all_main_src_namespaces_are_importable(self) -> None:
-        """The bridge phase should expose each major package namespace."""
+        """The consolidated src package should expose each major namespace."""
 
         module_names = (
             "lecture_analyzer.core",

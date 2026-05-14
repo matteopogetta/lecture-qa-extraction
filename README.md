@@ -5,33 +5,34 @@
 ExerPlaza Lecture Analyzer is a standalone Python prototype for transforming
 lecture audio or video into structured, traceable JSON artifacts.
 
-The official pipeline currently lives in the root modules:
+The official pipeline is now source-owned under `src/lecture_analyzer`:
 
-- `core/`
-- `input/`
-- `preprocessing/`
-- `transcription/`
-- `analysis/`
-- `output/`
+- `src/lecture_analyzer/core/`
+- `src/lecture_analyzer/input/`
+- `src/lecture_analyzer/preprocessing/`
+- `src/lecture_analyzer/transcription/`
+- `src/lecture_analyzer/analysis/`
+- `src/lecture_analyzer/output/`
 
-This is the real functional pipeline used by the project today.
+The root packages with the same names still exist, but only as temporary
+legacy wrappers that preserve backwards-compatible imports.
 
 ## Current repository status
 
-The repository is in a transition phase.
+The repository is in a post-consolidation compatibility phase.
 
-- The root modules contain the real sentence-centric pipeline.
-- `src/lecture_analyzer` now exposes bridge-based namespaces for all major
-  packages, but the root modules still own the implementation.
-- The root `main.py` is still the temporary wrapper entry point.
-- Docker now includes the real root modules and supports the official CLI help
-  path plus smoke-mode verification, but it is still a transitional setup.
+- `src/lecture_analyzer` contains the real sentence-centric pipeline.
+- The root packages are temporary wrappers that re-export the src-owned
+  implementation.
+- The root `main.py` is still a temporary compatibility wrapper.
+- Docker is aligned with the current structure and supports both the official
+  CLI and smoke-mode verification.
 
 See [docs/repository_status.md](docs/repository_status.md) for the repository
 status summary and [docs/simplification_plan.md](docs/simplification_plan.md)
 for the cleanup and migration plan.
 
-Bridge namespaces currently available:
+Public namespaces currently available:
 
 - `lecture_analyzer.core.*`
 - `lecture_analyzer.input.*`
@@ -56,16 +57,16 @@ Key properties:
 
 ## Reliable commands today
 
-Use the real pipeline through the root wrapper:
+The installable `lecture-analyzer` entry point is the official CLI:
 
 ```bash
-./.venv-system/bin/python main.py --help
+./.venv-system/bin/lecture-analyzer --help
 ```
 
 Typical pipeline invocation:
 
 ```bash
-./.venv-system/bin/python main.py sample_inputs/SSL1P1.mp4 --output artifacts/session.json
+./.venv-system/bin/lecture-analyzer /path/to/input.mp4 --output /path/to/output.json
 ```
 
 Run the full test suite:
@@ -74,20 +75,23 @@ Run the full test suite:
 ./.venv-system/bin/python -m pytest
 ```
 
-The installable `lecture-analyzer` entry point is the official CLI. It still
-runs through the transitional `src/lecture_analyzer` packaging layer while the
-real pipeline remains in the root modules.
+The root wrapper remains available for compatibility:
 
-During the bridge phase, prefer the `lecture_analyzer.*` namespace for new
-package-facing imports when practical, while treating the root packages as the
-temporary implementation source of truth.
+```bash
+./.venv-system/bin/python main.py --help
+```
+
+For package-facing imports, prefer `lecture_analyzer.*`. Root imports such as
+`core.*`, `input.*`, and `transcription.*` remain available only as temporary
+compatibility wrappers.
 
 ## Experimental or transitional areas
 
 The following areas should be treated as transitional, optional, or
 experimental:
 
-- bridge-based `src/lecture_analyzer` compatibility layer
+- root-package legacy wrappers
+- root `main.py` compatibility wrapper
 - Docker and Docker Compose integration
 - diarization
 - semantic QA retrieval and reranking
@@ -129,14 +133,14 @@ Depending on enabled branches, the real pipeline may also require:
 
 ```text
 project-root/
-├── main.py                     # temporary root wrapper
-├── core/                       # current official pipeline
-├── input/
-├── preprocessing/
-├── transcription/
-├── analysis/
-├── output/
-├── src/lecture_analyzer/       # bridge-based public namespace, future home
+├── main.py                     # temporary compatibility wrapper
+├── core/                       # legacy wrapper package
+├── input/                      # legacy wrapper package
+├── preprocessing/              # legacy wrapper package
+├── transcription/              # legacy wrapper package
+├── analysis/                   # legacy wrapper package
+├── output/                     # legacy wrapper package
+├── src/lecture_analyzer/       # src-owned pipeline implementation
 ├── docs/
 ├── tests/
 ├── pyproject.toml
@@ -146,15 +150,16 @@ project-root/
 
 ## Docker status
 
-The current Docker setup now copies both:
+The current Docker setup copies:
 
-- the official root-based pipeline modules
-- the transitional `src/lecture_analyzer` CLI package
+- the src-owned pipeline implementation
+- the official `lecture-analyzer` CLI package
+- the temporary legacy root wrappers needed for compatibility
 
 This means the container supports:
 
 - `lecture-analyzer --help`
 - `lecture-analyzer --smoke --input /app/sample_data/example.mp4 --output-dir /app/tmp/cli-smoke-output`
 
-It remains a transitional environment rather than the final canonical runtime
-for all heavy optional pipeline branches.
+Docker is aligned with the current repository structure, while heavy optional
+runtime branches still depend on their own external libraries and models.

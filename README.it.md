@@ -42,19 +42,18 @@ intermedi persistiti:
 Stato attuale:
 
 - gli step da 1 a 15 sono collegati nella pipeline eseguibile
-- la pipeline ufficiale del progetto vive oggi nei moduli root `core/`,
-  `input/`, `preprocessing/`, `transcription/`, `analysis/`, `output/`
+- la pipeline ufficiale del progetto vive ora sotto `src/lecture_analyzer/`
+  nei package `core/`, `input/`, `preprocessing/`, `transcription/`,
+  `analysis/`, `output/`
 - la segmentazione usa prima di tutto il layer delle sentences e fa fallback
   sul merged transcript solo se le sentences non sono disponibili
 - l'estrazione QA e sentence-aware e supporta retrieval e reranking semantici
   opzionali
 - `analysis/speaker_role.py` esiste ancora, ma resta un modulo placeholder e
   non fa parte del flusso principale
-- `src/lecture_analyzer` ora espone namespace bridge per tutti i package
-  principali, ma i moduli root restano ancora il source of truth
-- Docker ora include anche i moduli root reali e supporta la CLI ufficiale e
-  la smoke mode, ma resta un setup transitorio in vista della migrazione
-  src-based
+- i package root `core/`, `input/`, `preprocessing/`, `transcription/`,
+  `analysis/`, `output/` restano solo wrapper legacy temporanei
+- Docker e allineato alla struttura attuale src-based
 
 Documenti utili di stato:
 
@@ -69,6 +68,15 @@ Namespace bridge attualmente disponibili:
 - `lecture_analyzer.transcription.*`
 - `lecture_analyzer.analysis.*`
 - `lecture_analyzer.output.*`
+
+Import legacy ancora supportati temporaneamente:
+
+- `core.*`
+- `input.*`
+- `preprocessing.*`
+- `transcription.*`
+- `analysis.*`
+- `output.*`
 
 ## Requisiti Di Runtime
 
@@ -132,12 +140,11 @@ Run con `compute_type` esplicito per faster-whisper:
 
 Nota:
 
-- `main.py` root resta temporaneamente il wrapper ufficiale
-- `lecture-analyzer` e la CLI ufficiale, anche se passa ancora attraverso il
-  layer transitorio `src/lecture_analyzer` mentre la pipeline reale resta nei
-  moduli root
-- durante la fase bridge conviene preferire, dove sensato, i namespace
-  `lecture_analyzer.*` per i nuovi import package-facing
+- `lecture-analyzer` e la CLI ufficiale
+- `main.py` root resta solo un wrapper di compatibilita temporaneo
+- per i nuovi import package-facing conviene preferire i namespace
+  `lecture_analyzer.*`
+- gli import root restano disponibili solo per retrocompatibilita
 
 ## Superficie CLI
 
