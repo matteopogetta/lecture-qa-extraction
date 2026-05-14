@@ -1,26 +1,19 @@
-"""Compatibility bridge for the root-pipeline session loader."""
+"""Session loading utilities for the consolidated src-based input package."""
 
 from __future__ import annotations
 
-from pathlib import Path
-import sys
-
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
-
-from input import session_loader as legacy_session_loader
+from lecture_analyzer.input import _session_loader_impl as session_loader_impl
+from lecture_analyzer.input._session_loader_impl import *  # noqa: F401,F403
 
 
 def __getattr__(name: str) -> object:
-    """Expose the legacy root session-loader module through the src package."""
+    """Expose the consolidated session loader through the src package."""
 
-    return getattr(legacy_session_loader, name)
+    return getattr(session_loader_impl, name)
 
 
 __all__ = [
     name
-    for name in dir(legacy_session_loader)
+    for name in dir(session_loader_impl)
     if not name.startswith("_")
 ]

@@ -1,28 +1,21 @@
-"""Compatibility bridge for normalized-audio metadata persistence helpers."""
+"""Normalized-audio metadata persistence helpers for the src package."""
 
 from __future__ import annotations
 
-from pathlib import Path
-import sys
-
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
-
-from preprocessing import (
-    normalized_audio_metadata_store as legacy_normalized_audio_metadata_store,
+from lecture_analyzer.preprocessing import (
+    _normalized_audio_metadata_store_impl as normalized_audio_metadata_store_impl,
 )
+from lecture_analyzer.preprocessing._normalized_audio_metadata_store_impl import *  # noqa: F401,F403
 
 
 def __getattr__(name: str) -> object:
-    """Expose the legacy metadata-store module through the src package."""
+    """Expose the consolidated metadata store through the src package."""
 
-    return getattr(legacy_normalized_audio_metadata_store, name)
+    return getattr(normalized_audio_metadata_store_impl, name)
 
 
 __all__ = [
     name
-    for name in dir(legacy_normalized_audio_metadata_store)
+    for name in dir(normalized_audio_metadata_store_impl)
     if not name.startswith("_")
 ]

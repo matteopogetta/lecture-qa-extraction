@@ -1,26 +1,19 @@
-"""Compatibility bridge for the root-pipeline timing helpers."""
+"""Timing helpers for the consolidated src-based core package."""
 
 from __future__ import annotations
 
-from pathlib import Path
-import sys
-
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
-
-from core import timing as legacy_timing
+from lecture_analyzer.core import _timing_impl as timing_impl
+from lecture_analyzer.core._timing_impl import *  # noqa: F401,F403
 
 
 def __getattr__(name: str) -> object:
-    """Expose the legacy root timing module through the src package."""
+    """Expose the consolidated timing helpers through the src package."""
 
-    return getattr(legacy_timing, name)
+    return getattr(timing_impl, name)
 
 
 __all__ = [
     name
-    for name in dir(legacy_timing)
+    for name in dir(timing_impl)
     if not name.startswith("_")
 ]

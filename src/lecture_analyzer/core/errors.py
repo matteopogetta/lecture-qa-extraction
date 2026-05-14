@@ -1,26 +1,19 @@
-"""Compatibility bridge for the root-pipeline error classes."""
+"""Error classes for the consolidated src-based core package."""
 
 from __future__ import annotations
 
-from pathlib import Path
-import sys
-
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
-
-from core import errors as legacy_errors
+from lecture_analyzer.core import _errors_impl as errors_impl
+from lecture_analyzer.core._errors_impl import *  # noqa: F401,F403
 
 
 def __getattr__(name: str) -> object:
-    """Expose the legacy root error module through the src package."""
+    """Expose the consolidated core error classes through the src package."""
 
-    return getattr(legacy_errors, name)
+    return getattr(errors_impl, name)
 
 
 __all__ = [
     name
-    for name in dir(legacy_errors)
+    for name in dir(errors_impl)
     if not name.startswith("_")
 ]

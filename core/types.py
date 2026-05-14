@@ -1,29 +1,3 @@
-"""Shared enums and constrained values for the lecture prototype."""
+"""Legacy wrapper for the consolidated src-based core types module."""
 
-from __future__ import annotations
-
-from enum import Enum
-
-
-class MediaType(str, Enum):
-    """Supported original media types for lecture inputs."""
-
-    AUDIO = "audio"
-    VIDEO = "video"
-    UNSUPPORTED = "unsupported"
-
-
-class SpeakerRole(str, Enum):
-    """Supported estimated speaker roles."""
-
-    TEACHER = "teacher"
-    STUDENT = "student"
-    UNKNOWN = "unknown"
-
-
-class ProcessingStatus(str, Enum):
-    """High-level processing states for pipeline artifacts."""
-
-    PENDING = "pending"
-    READY = "ready"
-    FAILED = "failed"
+from lecture_analyzer.core.types import *  # noqa: F401,F403

@@ -1,26 +1,19 @@
-"""Compatibility bridge for the root audio normalizer module."""
+"""Audio normalization utilities for the consolidated src package."""
 
 from __future__ import annotations
 
-from pathlib import Path
-import sys
-
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
-
-from preprocessing import audio_normalizer as legacy_audio_normalizer
+from lecture_analyzer.preprocessing import _audio_normalizer_impl as audio_normalizer_impl
+from lecture_analyzer.preprocessing._audio_normalizer_impl import *  # noqa: F401,F403
 
 
 def __getattr__(name: str) -> object:
-    """Expose the legacy audio-normalizer module through the src package."""
+    """Expose the consolidated audio normalizer through the src package."""
 
-    return getattr(legacy_audio_normalizer, name)
+    return getattr(audio_normalizer_impl, name)
 
 
 __all__ = [
     name
-    for name in dir(legacy_audio_normalizer)
+    for name in dir(audio_normalizer_impl)
     if not name.startswith("_")
 ]

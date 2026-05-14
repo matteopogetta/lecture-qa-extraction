@@ -1,5 +1,3 @@
-"""Backward-compatible wrapper for the normalized audio service."""
+"""Legacy wrapper for the consolidated src-based audio extractor alias."""
 
-from preprocessing.audio_normalizer import AudioNormalizer
-
-AudioExtractor = AudioNormalizer
+from lecture_analyzer.preprocessing.audio_extractor import *  # noqa: F401,F403
