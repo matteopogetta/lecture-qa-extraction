@@ -1,1 +1,1 @@
-"""Output helpers for lecture analyzer results."""
+"""Output helpers and compatibility bridges for lecture analyzer results."""

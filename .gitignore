@@ -23,6 +23,8 @@ build/
 
 # Runtime output
 output/
+!src/lecture_analyzer/output/
+!src/lecture_analyzer/output/*.py
 temp/
 tmp/
 artifacts/
