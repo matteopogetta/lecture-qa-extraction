@@ -4,6 +4,8 @@ This mode is useful for local development, debugging, and custom experiments.
 For quick evaluation, the Docker demo is more stable and is the recommended
 entry point.
 
+The implementation-owning packages live under `src/lecture_analyzer`.
+
 ## Why this is not the recommended path
 
 - local Python environments are more fragile than Docker

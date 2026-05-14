@@ -6,8 +6,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from core.config import PipelineConfig
-from core.models import (
+from lecture_analyzer.core.config import PipelineConfig
+from lecture_analyzer.core.models import (
     AudioSource,
     InputSource,
     LectureSession,
@@ -18,8 +18,8 @@ from core.models import (
     Segment,
     TranscriptChunk,
 )
-from core.pipeline import LectureProcessingPipeline
-from core.types import MediaType
+from lecture_analyzer.core.pipeline import LectureProcessingPipeline
+from lecture_analyzer.core.types import MediaType
 
 
 class PipelineTimingTests(unittest.TestCase):

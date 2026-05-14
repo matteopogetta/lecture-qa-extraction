@@ -7,10 +7,15 @@ import unittest
 from pathlib import Path
 import warnings
 
-from analysis.sentence_provenance import validate_sentence_structure
-from analysis.sentence_reconstruction import SentenceReconstructor
-from core.config import PipelineConfig
-from core.models import AudioSource, LectureSession, Sentence, Utterance
+from lecture_analyzer.analysis.sentence_provenance import validate_sentence_structure
+from lecture_analyzer.analysis.sentence_reconstruction import SentenceReconstructor
+from lecture_analyzer.core.config import PipelineConfig
+from lecture_analyzer.core.models import (
+    AudioSource,
+    LectureSession,
+    Sentence,
+    Utterance,
+)
 
 
 class _FakeSplitter:

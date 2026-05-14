@@ -14,12 +14,11 @@ The official lecture-processing pipeline is now source-owned under
 
 This is the real, functional pipeline used by the project today.
 
-## Compatibility status
+## Import status
 
-The repository intentionally exposes two aligned import surfaces:
+The repository now exposes a single implementation-owning import surface:
 
 1. The src-owned implementation under `src/lecture_analyzer`.
-2. Legacy root packages kept as temporary wrappers.
 
 The following public namespaces are available and stable:
 
@@ -30,17 +29,8 @@ The following public namespaces are available and stable:
 - `lecture_analyzer.analysis.*`
 - `lecture_analyzer.output.*`
 
-The corresponding root imports still work:
-
-- `core.*`
-- `input.*`
-- `preprocessing.*`
-- `transcription.*`
-- `analysis.*`
-- `output.*`
-
-These root imports are compatibility wrappers only. They should no longer be
-treated as the implementation-owning modules.
+The former root package imports have been removed as part of the repository
+cleanup. Public and internal imports should use `lecture_analyzer.*`.
 
 ## CLI status
 
@@ -54,7 +44,6 @@ treated as the implementation-owning modules.
 The Docker setup is aligned with the current repository shape:
 
 - it copies the src-owned implementation packages
-- it keeps the temporary root wrappers available
 - it installs the `lecture-analyzer` CLI from `src/lecture_analyzer`
 - it supports `lecture-analyzer --help`
 - it supports the temporary smoke mode
@@ -85,23 +74,22 @@ flow is:
 
 `input -> audio normalization -> transcription -> alignment -> sentence reconstruction -> segmentation -> QA extraction -> JSON output`
 
-## How to use imports during the bridge phase
+## Import guidance
 
-During this phase:
+During the current phase:
 
-- prefer `lecture_analyzer.*` for package-facing imports
-- treat root imports as temporary compatibility wrappers
-- keep runtime changes conservative until the wrappers are retired
+- use `lecture_analyzer.*` for package-facing imports
+- treat `main.py` as a temporary CLI convenience wrapper only
+- keep runtime changes conservative while packaging and docs settle around the
+  src-owned structure
 
 ## Next migration phase
 
-The next phase is cleanup after consolidation. Recommended order:
+The current cleanup phase is focused on stabilizing the src-owned structure.
+Recommended order:
 
 1. stabilize the consolidated src-owned packages
-2. keep validating both src and legacy imports during the transition
-3. remove redundant root wrappers package by package
-4. simplify CLI and packaging once the wrappers are retired
-5. prune remaining optional or placeholder branches that are no longer needed
-
-The project has already completed the physical consolidation step. The main
-remaining work is to reduce temporary compatibility surface area safely.
+2. simplify CLI and packaging around the single import surface
+3. prune remaining optional or placeholder branches that are no longer needed
+4. retire `main.py` when external workflows no longer need the compatibility
+   entry point

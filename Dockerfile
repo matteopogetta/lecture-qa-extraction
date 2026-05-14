@@ -14,19 +14,13 @@ RUN pip install --no-cache-dir -r requirements.txt
 RUN pip install --no-cache-dir faster-whisper whisperx
 
 COPY pyproject.toml README.md .env.example main.py ./
-COPY core ./core
-COPY input ./input
-COPY preprocessing ./preprocessing
-COPY transcription ./transcription
-COPY analysis ./analysis
-COPY output ./output
 COPY src ./src
 COPY docs ./docs
 COPY sample_data ./sample_data
 COPY scripts ./scripts
 COPY tests ./tests
 
-ENV PYTHONPATH=/app:/app/src
+ENV PYTHONPATH=/app/src
 
 RUN pip install --no-cache-dir -e .
 

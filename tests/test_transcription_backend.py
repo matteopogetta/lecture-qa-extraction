@@ -7,8 +7,8 @@ import types
 import unittest
 from unittest.mock import patch
 
-from core.config import PipelineConfig
-from transcription.backend import FasterWhisperBackend
+from lecture_analyzer.core.config import PipelineConfig
+from lecture_analyzer.transcription.backend import FasterWhisperBackend
 
 
 class _FakeWhisperModel:

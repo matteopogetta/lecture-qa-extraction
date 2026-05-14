@@ -18,6 +18,9 @@ mkdir -p ~/Documents/LectureQASample/input ~/Documents/LectureQASample/output
 - internet access on the first run for model downloads
 - this repository cloned locally
 
+The Docker demo runs the official src-owned pipeline under
+`src/lecture_analyzer`.
+
 ## 2. Prepare the folders
 
 ```bash

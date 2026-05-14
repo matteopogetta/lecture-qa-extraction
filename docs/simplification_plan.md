@@ -41,10 +41,11 @@ The following areas are good candidates for deprecation, isolation, or removal
 in later cleanup steps:
 
 - bootstrap placeholder as an autonomous pipeline
-- `analysis/speaker_role.py` if it remains unintegrated
+- `src/lecture_analyzer/analysis/speaker_role.py` if it remains unintegrated
 - heavy `sample_inputs/` media tracked in the repository
 - tracked `artifacts/` and cache artifacts in the repository
-- legacy root wrappers once downstream imports have been migrated
+- `main.py` once downstream workflows no longer need the compatibility entry
+  point
 
 ## E. Next migration steps
 
@@ -59,7 +60,7 @@ Recommended order for the next repository phases:
 3. official CLI path aligned to the real pipeline
 4. bridge-based `lecture_analyzer.*` namespace stabilization
 5. physical consolidation into `src/lecture_analyzer`
-6. compatibility validation across legacy and src imports
+6. compatibility validation across CLI and src imports
 7. final removal of redundant root-package wrappers
 8. Docker and packaging cleanup after wrapper retirement
 
@@ -75,6 +76,5 @@ those namespaces are the implementation-owning source of truth:
 - `lecture_analyzer.analysis.*`
 - `lecture_analyzer.output.*`
 
-The legacy root packages still exist only to preserve compatibility during the
-transition. They should be treated as temporary wrappers rather than as real
-implementation modules.
+The legacy root packages have been removed. The repository now keeps a single
+implementation-owning namespace under `lecture_analyzer.*`.

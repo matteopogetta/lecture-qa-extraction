@@ -7,11 +7,14 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from core.config import PipelineConfig
-from core.errors import AudioValidationError
-from core.models import InputSource
-from core.types import MediaType
-from preprocessing.audio_normalizer import AudioNormalizer, ProbedAudioInfo
+from lecture_analyzer.core.config import PipelineConfig
+from lecture_analyzer.core.errors import AudioValidationError
+from lecture_analyzer.core.models import InputSource
+from lecture_analyzer.core.types import MediaType
+from lecture_analyzer.preprocessing.audio_normalizer import (
+    AudioNormalizer,
+    ProbedAudioInfo,
+)
 
 
 class _TestAudioNormalizer(AudioNormalizer):

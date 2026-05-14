@@ -7,10 +7,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from core.config import PipelineConfig
-from core.models import AudioSource, LectureSession, TranscriptChunk
-from transcription.cache_store import TranscriptionCacheStore
-from transcription.whisperx_aligner import (
+from lecture_analyzer.core.config import PipelineConfig
+from lecture_analyzer.core.models import AudioSource, LectureSession, TranscriptChunk
+from lecture_analyzer.transcription.cache_store import TranscriptionCacheStore
+from lecture_analyzer.transcription.whisperx_aligner import (
     AlignmentUnavailableError,
     WhisperXAligner,
 )

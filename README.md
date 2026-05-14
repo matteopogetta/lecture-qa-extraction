@@ -52,16 +52,11 @@ The official pipeline is now source-owned under `src/lecture_analyzer`:
 - `src/lecture_analyzer/analysis/`
 - `src/lecture_analyzer/output/`
 
-The root packages with the same names still exist, but only as temporary
-legacy wrappers that preserve backwards-compatible imports.
-
 ## Current repository status
 
-The repository is in a post-consolidation compatibility phase.
+The repository is now in a post-wrapper cleanup phase.
 
 - `src/lecture_analyzer` contains the real sentence-centric pipeline.
-- The root packages are temporary wrappers that re-export the src-owned
-  implementation.
 - The root `main.py` is still a temporary compatibility wrapper.
 - Docker is aligned with the current structure and supports both the official
   CLI and smoke-mode verification.
@@ -122,16 +117,14 @@ The root wrapper remains available for compatibility:
 For a professor-friendly Docker-only demo flow, see
 [docs/demo_docker.md](docs/demo_docker.md).
 
-For package-facing imports, prefer `lecture_analyzer.*`. Root imports such as
-`core.*`, `input.*`, and `transcription.*` remain available only as temporary
-compatibility wrappers.
+For package-facing imports, use `lecture_analyzer.*`. The legacy root package
+imports have been retired.
 
 ## Experimental or transitional areas
 
 The following areas should be treated as transitional, optional, or
 experimental:
 
-- root-package legacy wrappers
 - root `main.py` compatibility wrapper
 - Docker and Docker Compose integration
 - diarization
@@ -140,7 +133,8 @@ experimental:
 - adaptive, windowed, and `both` segmentation modes
 - text-only transcription cache fallback
 - `disable-alignment` compatibility mode
-- `analysis/speaker_role.py`, which remains a placeholder unless integrated
+- `src/lecture_analyzer/analysis/speaker_role.py`, which remains a placeholder
+  unless integrated
 
 ## Local materials and generated artifacts
 
@@ -175,12 +169,6 @@ Depending on enabled branches, the real pipeline may also require:
 ```text
 project-root/
 ├── main.py                     # temporary compatibility wrapper
-├── core/                       # legacy wrapper package
-├── input/                      # legacy wrapper package
-├── preprocessing/              # legacy wrapper package
-├── transcription/              # legacy wrapper package
-├── analysis/                   # legacy wrapper package
-├── output/                     # legacy wrapper package
 ├── src/lecture_analyzer/       # src-owned pipeline implementation
 ├── docs/
 ├── tests/
@@ -195,7 +183,6 @@ The current Docker setup copies:
 
 - the src-owned pipeline implementation
 - the official `lecture-analyzer` CLI package
-- the temporary legacy root wrappers needed for compatibility
 
 This means the container supports:
 

@@ -6,9 +6,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from analysis.segmenter import TranscriptSegmenter
-from core.config import PipelineConfig
-from core.models import (
+from lecture_analyzer.analysis.segmenter import TranscriptSegmenter
+from lecture_analyzer.core.config import PipelineConfig
+from lecture_analyzer.core.models import (
     LectureSession,
     MergedTranscript,
     MergedTranscriptUnit,
@@ -17,7 +17,7 @@ from core.models import (
     TranscriptChunk,
     Utterance,
 )
-from core.types import SpeakerRole
+from lecture_analyzer.core.types import SpeakerRole
 
 
 class TranscriptSegmenterTests(unittest.TestCase):

@@ -7,10 +7,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from core.config import PipelineConfig
-from core.models import AudioSource
-from transcription.backend import BackendSegment
-from transcription.transcriber import Transcriber
+from lecture_analyzer.core.config import PipelineConfig
+from lecture_analyzer.core.models import AudioSource
+from lecture_analyzer.transcription.backend import BackendSegment
+from lecture_analyzer.transcription.transcriber import Transcriber
 
 
 class _FakeBackend:

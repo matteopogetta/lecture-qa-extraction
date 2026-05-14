@@ -28,6 +28,7 @@ output/
 output/schema_notes.md
 !src/lecture_analyzer/output/
 !src/lecture_analyzer/output/*.py
+docs/DOCUMENTAZIONE_TECNICA_PROGETTO_BOZZA.md
 temp/
 tmp/
 artifacts/

@@ -4,10 +4,15 @@ from __future__ import annotations
 
 import unittest
 
-from analysis.audio_quality import AudioQualityAssessment
-from analysis.speaker_attribution import SpeakerAttributor
-from core.config import PipelineConfig
-from core.models import AudioSource, DiarizationSegment, LectureSession, Utterance
+from lecture_analyzer.analysis.audio_quality import AudioQualityAssessment
+from lecture_analyzer.analysis.speaker_attribution import SpeakerAttributor
+from lecture_analyzer.core.config import PipelineConfig
+from lecture_analyzer.core.models import (
+    AudioSource,
+    DiarizationSegment,
+    LectureSession,
+    Utterance,
+)
 
 
 class _StubAudioQualityAnalyzer:

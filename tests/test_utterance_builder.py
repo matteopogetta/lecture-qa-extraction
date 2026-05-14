@@ -6,16 +6,16 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from analysis.utterance_builder import UtteranceBuilder
-from core.config import PipelineConfig
-from core.models import (
+from lecture_analyzer.analysis.utterance_builder import UtteranceBuilder
+from lecture_analyzer.core.config import PipelineConfig
+from lecture_analyzer.core.models import (
     AlignedTranscript,
     AlignedTranscriptSegment,
     AlignedWord,
     AudioSource,
     LectureSession,
 )
-from core.pipeline import LectureProcessingPipeline
+from lecture_analyzer.core.pipeline import LectureProcessingPipeline
 
 
 class UtteranceBuilderTests(unittest.TestCase):

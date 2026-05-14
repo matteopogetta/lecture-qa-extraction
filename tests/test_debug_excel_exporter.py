@@ -11,8 +11,8 @@ from unittest.mock import patch
 
 from openpyxl import load_workbook
 
-from core.config import PipelineConfig
-from core.models import (
+from lecture_analyzer.core.config import PipelineConfig
+from lecture_analyzer.core.models import (
     AudioSource,
     InputSource,
     LectureSession,
@@ -21,9 +21,9 @@ from core.models import (
     Segment,
     TranscriptChunk,
 )
-from core.pipeline import LectureProcessingPipeline
-from core.types import MediaType
-from output.debug_excel_exporter import (
+from lecture_analyzer.core.pipeline import LectureProcessingPipeline
+from lecture_analyzer.core.types import MediaType
+from lecture_analyzer.output.debug_excel_exporter import (
     HEADERS,
     QA_HEADERS,
     REVIEW_CANDIDATE_HEADERS,
@@ -2234,7 +2234,9 @@ class DebugExcelExporterTests(unittest.TestCase):
             )
             enabled_pipeline = self._build_fake_pipeline(enabled_config, media_path)
 
-            with patch("core.pipeline.export_run_to_excel") as export_mock:
+            with patch(
+                "lecture_analyzer.core._processing_pipeline_impl.export_run_to_excel",
+            ) as export_mock:
                 enabled_pipeline.process(
                     media_path,
                     output_path=temp_path / "exports_enabled",
@@ -2264,7 +2266,9 @@ class DebugExcelExporterTests(unittest.TestCase):
             )
             disabled_pipeline = self._build_fake_pipeline(disabled_config, media_path)
 
-            with patch("core.pipeline.export_run_to_excel") as export_mock:
+            with patch(
+                "lecture_analyzer.core._processing_pipeline_impl.export_run_to_excel",
+            ) as export_mock:
                 disabled_pipeline.process(
                     media_path,
                     output_path=temp_path / "exports_disabled",
@@ -2291,7 +2295,9 @@ class DebugExcelExporterTests(unittest.TestCase):
             )
             pipeline = self._build_fake_pipeline(config, media_path)
 
-            with patch("core.pipeline.export_run_to_excel") as export_mock:
+            with patch(
+                "lecture_analyzer.core._processing_pipeline_impl.export_run_to_excel",
+            ) as export_mock:
                 pipeline.process(
                     media_path,
                     output_path=temp_path / "exports_named",

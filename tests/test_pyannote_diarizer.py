@@ -12,10 +12,10 @@ import wave
 import warnings
 from unittest.mock import patch
 
-from core.config import PipelineConfig
-from core.models import AudioSource, LectureSession
-from transcription.cache_store import TranscriptionCacheStore
-from transcription.pyannote_diarizer import (
+from lecture_analyzer.core.config import PipelineConfig
+from lecture_analyzer.core.models import AudioSource, LectureSession
+from lecture_analyzer.transcription.cache_store import TranscriptionCacheStore
+from lecture_analyzer.transcription.pyannote_diarizer import (
     DiarizationUnavailableError,
     PyannoteDiarizer,
 )

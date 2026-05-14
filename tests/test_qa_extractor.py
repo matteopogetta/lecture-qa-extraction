@@ -6,17 +6,17 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from analysis.qa_extractor import QAPairExtractor
-from analysis.semantic_reranking import (
+from lecture_analyzer.analysis.qa_extractor import QAPairExtractor
+from lecture_analyzer.analysis.semantic_reranking import (
     SemanticRerankScore,
     SemanticRerankingUnavailableError,
 )
-from analysis.semantic_retrieval import (
+from lecture_analyzer.analysis.semantic_retrieval import (
     SemanticRetrievalUnavailableError,
     SemanticSearchHit,
 )
-from core.config import PipelineConfig
-from core.models import (
+from lecture_analyzer.core.config import PipelineConfig
+from lecture_analyzer.core.models import (
     LectureSession,
     MergedTranscript,
     MergedTranscriptUnit,
@@ -24,8 +24,8 @@ from core.models import (
     Sentence,
     Utterance,
 )
-from core.pipeline import LectureProcessingPipeline
-from core.types import SpeakerRole
+from lecture_analyzer.core.pipeline import LectureProcessingPipeline
+from lecture_analyzer.core.types import SpeakerRole
 
 
 class QAPairExtractorTests(unittest.TestCase):

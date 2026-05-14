@@ -81,16 +81,15 @@ Stato attuale:
 
 - gli step da 1 a 15 sono collegati nella pipeline eseguibile
 - la pipeline ufficiale del progetto vive ora sotto `src/lecture_analyzer/`
-  nei package `core/`, `input/`, `preprocessing/`, `transcription/`,
+  nei sottopackage `core/`, `input/`, `preprocessing/`, `transcription/`,
   `analysis/`, `output/`
 - la segmentazione usa prima di tutto il layer delle sentences e fa fallback
   sul merged transcript solo se le sentences non sono disponibili
 - l'estrazione QA e sentence-aware e supporta retrieval e reranking semantici
   opzionali
-- `analysis/speaker_role.py` esiste ancora, ma resta un modulo placeholder e
+- `src/lecture_analyzer/analysis/speaker_role.py` esiste ancora, ma resta un
+  modulo placeholder e
   non fa parte del flusso principale
-- i package root `core/`, `input/`, `preprocessing/`, `transcription/`,
-  `analysis/`, `output/` restano solo wrapper legacy temporanei
 - Docker e allineato alla struttura attuale src-based
 
 Documenti utili di stato:
@@ -98,7 +97,7 @@ Documenti utili di stato:
 - `docs/repository_status.md`
 - `docs/simplification_plan.md`
 
-Namespace bridge attualmente disponibili:
+Namespace pubblici attualmente disponibili:
 
 - `lecture_analyzer.core.*`
 - `lecture_analyzer.input.*`
@@ -107,14 +106,8 @@ Namespace bridge attualmente disponibili:
 - `lecture_analyzer.analysis.*`
 - `lecture_analyzer.output.*`
 
-Import legacy ancora supportati temporaneamente:
-
-- `core.*`
-- `input.*`
-- `preprocessing.*`
-- `transcription.*`
-- `analysis.*`
-- `output.*`
+Gli import root legacy sono stati rimossi. Gli import di progetto devono usare
+solo `lecture_analyzer.*`.
 
 ## Requisiti Di Runtime
 
@@ -225,7 +218,7 @@ Comportamenti importanti:
 
 ### 1. Caricamento input
 
-`input/session_loader.py`
+`src/lecture_analyzer/input/session_loader.py`
 
 Responsabilita:
 
@@ -244,7 +237,7 @@ Metodi pubblici principali:
 
 ### 2. Normalizzazione audio
 
-`preprocessing/audio_normalizer.py`
+`src/lecture_analyzer/preprocessing/audio_normalizer.py`
 
 Responsabilita:
 
@@ -272,7 +265,7 @@ Metodi pubblici principali:
 
 ### 3. Trascrizione
 
-`transcription/backend.py`
+`src/lecture_analyzer/transcription/backend.py`
 
 Responsabilita:
 
@@ -283,7 +276,7 @@ Backend attuale:
 
 - `faster-whisper`
 
-`transcription/transcriber.py`
+`src/lecture_analyzer/transcription/transcriber.py`
 
 Responsabilita:
 
@@ -299,7 +292,7 @@ Metodi pubblici principali:
 
 ### 4. Alignment
 
-`transcription/whisperx_aligner.py`
+`src/lecture_analyzer/transcription/whisperx_aligner.py`
 
 Responsabilita:
 
@@ -314,7 +307,7 @@ Metodi pubblici principali:
 
 ### 5. Utterance building
 
-`analysis/utterance_builder.py`
+`src/lecture_analyzer/analysis/utterance_builder.py`
 
 Responsabilita:
 
@@ -329,7 +322,7 @@ Metodi pubblici principali:
 
 ### 6. Diarization
 
-`transcription/pyannote_diarizer.py`
+`src/lecture_analyzer/transcription/pyannote_diarizer.py`
 
 Responsabilita:
 
@@ -350,7 +343,7 @@ Comportamento token:
 
 ### 7. Speaker attribution
 
-`analysis/speaker_attribution.py`
+`src/lecture_analyzer/analysis/speaker_attribution.py`
 
 Responsabilita:
 
@@ -367,12 +360,12 @@ Metodi pubblici principali:
 
 Moduli di supporto:
 
-- `analysis/audio_quality.py`
-- `analysis/speaker_stability.py`
+- `src/lecture_analyzer/analysis/audio_quality.py`
+- `src/lecture_analyzer/analysis/speaker_stability.py`
 
 ### 8. Sentence reconstruction
 
-`analysis/sentence_reconstruction.py`
+`src/lecture_analyzer/analysis/sentence_reconstruction.py`
 
 Responsabilita:
 
@@ -390,11 +383,11 @@ Metodi pubblici principali:
 
 Validazione di supporto:
 
-- `analysis/sentence_provenance.py`
+- `src/lecture_analyzer/analysis/sentence_provenance.py`
 
 ### 9. Merge e normalizzazione transcript
 
-`transcription/transcript_merger.py`
+`src/lecture_analyzer/transcription/transcript_merger.py`
 
 Responsabilita:
 
@@ -402,7 +395,7 @@ Responsabilita:
 - preservare la tracciabilita dei chunk
 - mantenere visibili overlap e anomalie invece di nasconderli
 
-`transcription/transcript_normalizer.py`
+`src/lecture_analyzer/transcription/transcript_normalizer.py`
 
 Responsabilita:
 
@@ -411,7 +404,7 @@ Responsabilita:
 
 ### 10. Segmentazione
 
-`analysis/segmenter.py`
+`src/lecture_analyzer/analysis/segmenter.py`
 
 Responsabilita:
 
@@ -434,7 +427,7 @@ Metodi pubblici principali:
 
 ### 11. Estrazione QA
 
-`analysis/qa_extractor.py`
+`src/lecture_analyzer/analysis/qa_extractor.py`
 
 Responsabilita:
 
@@ -450,13 +443,13 @@ Metodo pubblico principale:
 
 Moduli di supporto:
 
-- `analysis/qa_rules.py`
-- `analysis/semantic_retrieval.py`
-- `analysis/semantic_reranking.py`
+- `src/lecture_analyzer/analysis/qa_rules.py`
+- `src/lecture_analyzer/analysis/semantic_retrieval.py`
+- `src/lecture_analyzer/analysis/semantic_reranking.py`
 
 ### 12. Export
 
-`output/json_exporter.py`
+`src/lecture_analyzer/output/json_exporter.py`
 
 Responsabilita:
 
@@ -469,7 +462,7 @@ Metodi pubblici principali:
 - `export(session, output_path, segmentation_mode=None) -> Path`
 - `export_many(sessions_by_mode, output_path=None) -> dict[str, Path]`
 
-`output/debug_excel_exporter.py`
+`src/lecture_analyzer/output/debug_excel_exporter.py`
 
 Responsabilita:
 
@@ -478,11 +471,11 @@ Responsabilita:
 
 Modulo di supporto:
 
-- `output/sentence_provenance_validation.py`
+- `src/lecture_analyzer/output/sentence_provenance_validation.py`
 
 ## Layer Core Condiviso
 
-### `core/config.py`
+### `src/lecture_analyzer/core/config.py`
 
 Scopo:
 
@@ -502,7 +495,7 @@ API pubblica principale:
 - `sentence_artifacts_directory`
 - `pipeline_execution_mode`
 
-### `core/models.py`
+### `src/lecture_analyzer/core/models.py`
 
 Scopo:
 
@@ -519,7 +512,7 @@ Famiglie di modelli principali:
 - dati operativi: `PipelineStageTiming`, `PipelineTiming`
 - aggregato principale: `LectureSession`
 
-### `core/pipeline.py`
+### `src/lecture_analyzer/core/pipeline.py`
 
 Scopo:
 
@@ -542,7 +535,7 @@ Metodi pubblici principali:
 - `extract_qa_candidates(session) -> LectureSession`
 - `process(input_paths, output_path=None, session_id=None)`
 
-### `core/timing.py`
+### `src/lecture_analyzer/core/timing.py`
 
 Scopo:
 
@@ -572,7 +565,7 @@ Sezioni top-level attuali:
 
 Le note sul contratto attuale vivono in:
 
-- `output/schema_notes.md`
+- `docs/schema_notes.md`
 
 Versione di schema esportata da `LectureSession`:
 
@@ -663,7 +656,8 @@ PYTHONPATH=. pytest -q
 
 ## Limiti Noti
 
-- `analysis/speaker_role.py` e ancora un placeholder e non e integrato nel
+- `src/lecture_analyzer/analysis/speaker_role.py` e ancora un placeholder e
+  non e integrato nel
   flusso eseguibile
 - il contratto JSON e un contratto tecnico di lavoro, non ancora un JSON
   Schema formale
@@ -677,12 +671,12 @@ PYTHONPATH=. pytest -q
 File e cartelle utili:
 
 - `main.py`
-- `core/`
-- `input/`
-- `preprocessing/`
-- `transcription/`
-- `analysis/`
-- `output/`
+- `src/lecture_analyzer/core/`
+- `src/lecture_analyzer/input/`
+- `src/lecture_analyzer/preprocessing/`
+- `src/lecture_analyzer/transcription/`
+- `src/lecture_analyzer/analysis/`
+- `src/lecture_analyzer/output/`
 - `tests/`
 - `sample_inputs/`
 - `SNAPSHOT_PROGETTO.md`
