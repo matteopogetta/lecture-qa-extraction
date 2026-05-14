@@ -146,6 +146,8 @@ Nota:
   `lecture_analyzer.*`
 - gli import root restano disponibili solo per retrocompatibilita
 
+Per una demo semplice solo Docker, vedi `docs/demo_docker.md`.
+
 ## Superficie CLI
 
 `main.py` espone la CLI operativa attuale.

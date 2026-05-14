@@ -81,6 +81,9 @@ The root wrapper remains available for compatibility:
 ./.venv-system/bin/python main.py --help
 ```
 
+For a professor-friendly Docker-only demo flow, see
+[docs/demo_docker.md](docs/demo_docker.md).
+
 For package-facing imports, prefer `lecture_analyzer.*`. Root imports such as
 `core.*`, `input.*`, and `transcription.*` remain available only as temporary
 compatibility wrappers.
