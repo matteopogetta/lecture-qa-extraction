@@ -1,26 +1,21 @@
-"""Compatibility bridge for the root WhisperX aligner module."""
+"""WhisperX-based forced alignment for the src-based package."""
 
 from __future__ import annotations
 
-from pathlib import Path
-import sys
-
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
-
-from transcription import whisperx_aligner as legacy_whisperx_aligner
+from lecture_analyzer.transcription import (
+    _whisperx_aligner_impl as whisperx_aligner_impl,
+)
+from lecture_analyzer.transcription._whisperx_aligner_impl import *  # noqa: F401,F403
 
 
 def __getattr__(name: str) -> object:
-    """Expose the legacy WhisperX aligner through the src namespace."""
+    """Expose the consolidated WhisperX aligner through src."""
 
-    return getattr(legacy_whisperx_aligner, name)
+    return getattr(whisperx_aligner_impl, name)
 
 
 __all__ = [
     name
-    for name in dir(legacy_whisperx_aligner)
+    for name in dir(whisperx_aligner_impl)
     if not name.startswith("_")
 ]

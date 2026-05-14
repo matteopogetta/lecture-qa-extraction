@@ -1,26 +1,21 @@
-"""Compatibility bridge for the root transcript-normalizer module."""
+"""Conservative transcript normalization utilities for the src package."""
 
 from __future__ import annotations
 
-from pathlib import Path
-import sys
-
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
-
-from transcription import transcript_normalizer as legacy_transcript_normalizer
+from lecture_analyzer.transcription import (
+    _transcript_normalizer_impl as transcript_normalizer_impl,
+)
+from lecture_analyzer.transcription._transcript_normalizer_impl import *  # noqa: F401,F403
 
 
 def __getattr__(name: str) -> object:
-    """Expose the legacy transcript normalizer through the src namespace."""
+    """Expose the consolidated transcript normalizer through src."""
 
-    return getattr(legacy_transcript_normalizer, name)
+    return getattr(transcript_normalizer_impl, name)
 
 
 __all__ = [
     name
-    for name in dir(legacy_transcript_normalizer)
+    for name in dir(transcript_normalizer_impl)
     if not name.startswith("_")
 ]
