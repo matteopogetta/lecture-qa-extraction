@@ -1,26 +1,17 @@
-"""Compatibility bridge for the root semantic-reranking module."""
+"""Src-facing export surface for the consolidated semantic_reranking module."""
 
-from __future__ import annotations
-
-from pathlib import Path
-import sys
-
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
-
-from analysis import semantic_reranking as legacy_semantic_reranking
+from lecture_analyzer.analysis import _semantic_reranking_impl as semantic_reranking_impl
+from lecture_analyzer.analysis._semantic_reranking_impl import *  # noqa: F401,F403
 
 
 def __getattr__(name: str) -> object:
-    """Expose the legacy semantic reranking module through src."""
+    """Expose the consolidated semantic_reranking implementation through src."""
 
-    return getattr(legacy_semantic_reranking, name)
+    return getattr(semantic_reranking_impl, name)
 
 
 __all__ = [
     name
-    for name in dir(legacy_semantic_reranking)
+    for name in dir(semantic_reranking_impl)
     if not name.startswith("_")
 ]

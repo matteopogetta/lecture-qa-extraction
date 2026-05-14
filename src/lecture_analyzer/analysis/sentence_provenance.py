@@ -1,26 +1,17 @@
-"""Compatibility bridge for the root sentence-provenance module."""
+"""Src-facing export surface for the consolidated sentence_provenance module."""
 
-from __future__ import annotations
-
-from pathlib import Path
-import sys
-
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
-
-from analysis import sentence_provenance as legacy_sentence_provenance
+from lecture_analyzer.analysis import _sentence_provenance_impl as sentence_provenance_impl
+from lecture_analyzer.analysis._sentence_provenance_impl import *  # noqa: F401,F403
 
 
 def __getattr__(name: str) -> object:
-    """Expose the legacy sentence provenance module through src."""
+    """Expose the consolidated sentence_provenance implementation through src."""
 
-    return getattr(legacy_sentence_provenance, name)
+    return getattr(sentence_provenance_impl, name)
 
 
 __all__ = [
     name
-    for name in dir(legacy_sentence_provenance)
+    for name in dir(sentence_provenance_impl)
     if not name.startswith("_")
 ]

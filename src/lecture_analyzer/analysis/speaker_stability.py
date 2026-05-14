@@ -1,26 +1,17 @@
-"""Compatibility bridge for the root speaker-stability module."""
+"""Src-facing export surface for the consolidated speaker_stability module."""
 
-from __future__ import annotations
-
-from pathlib import Path
-import sys
-
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
-
-from analysis import speaker_stability as legacy_speaker_stability
+from lecture_analyzer.analysis import _speaker_stability_impl as speaker_stability_impl
+from lecture_analyzer.analysis._speaker_stability_impl import *  # noqa: F401,F403
 
 
 def __getattr__(name: str) -> object:
-    """Expose the legacy speaker-stability module through src."""
+    """Expose the consolidated speaker_stability implementation through src."""
 
-    return getattr(legacy_speaker_stability, name)
+    return getattr(speaker_stability_impl, name)
 
 
 __all__ = [
     name
-    for name in dir(legacy_speaker_stability)
+    for name in dir(speaker_stability_impl)
     if not name.startswith("_")
 ]

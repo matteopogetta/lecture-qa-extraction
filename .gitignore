@@ -23,6 +23,9 @@ build/
 
 # Runtime output
 output/
+!output/
+!output/*.py
+output/schema_notes.md
 !src/lecture_analyzer/output/
 !src/lecture_analyzer/output/*.py
 temp/

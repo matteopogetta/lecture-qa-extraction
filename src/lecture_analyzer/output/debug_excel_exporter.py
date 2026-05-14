@@ -1,26 +1,17 @@
-"""Compatibility bridge for the root debug Excel exporter module."""
+"""Src-facing export surface for the consolidated debug_excel_exporter module."""
 
-from __future__ import annotations
-
-from pathlib import Path
-import sys
-
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
-
-from output import debug_excel_exporter as legacy_debug_excel_exporter
+from lecture_analyzer.output import _debug_excel_exporter_impl as debug_excel_exporter_impl
+from lecture_analyzer.output._debug_excel_exporter_impl import *  # noqa: F401,F403
 
 
 def __getattr__(name: str) -> object:
-    """Expose the legacy debug Excel exporter through the src namespace."""
+    """Expose the consolidated debug_excel_exporter implementation through src."""
 
-    return getattr(legacy_debug_excel_exporter, name)
+    return getattr(debug_excel_exporter_impl, name)
 
 
 __all__ = [
     name
-    for name in dir(legacy_debug_excel_exporter)
+    for name in dir(debug_excel_exporter_impl)
     if not name.startswith("_")
 ]

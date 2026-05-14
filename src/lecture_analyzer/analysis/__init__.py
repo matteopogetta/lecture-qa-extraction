@@ -1,1 +1,1 @@
-"""Compatibility bridges for the root analysis package."""
+"""Analysis helpers for the consolidated src-based package."""

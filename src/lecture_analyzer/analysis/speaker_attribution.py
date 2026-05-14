@@ -1,26 +1,17 @@
-"""Compatibility bridge for the root speaker-attribution module."""
+"""Src-facing export surface for the consolidated speaker_attribution module."""
 
-from __future__ import annotations
-
-from pathlib import Path
-import sys
-
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
-
-from analysis import speaker_attribution as legacy_speaker_attribution
+from lecture_analyzer.analysis import _speaker_attribution_impl as speaker_attribution_impl
+from lecture_analyzer.analysis._speaker_attribution_impl import *  # noqa: F401,F403
 
 
 def __getattr__(name: str) -> object:
-    """Expose the legacy speaker attribution module through src."""
+    """Expose the consolidated speaker_attribution implementation through src."""
 
-    return getattr(legacy_speaker_attribution, name)
+    return getattr(speaker_attribution_impl, name)
 
 
 __all__ = [
     name
-    for name in dir(legacy_speaker_attribution)
+    for name in dir(speaker_attribution_impl)
     if not name.startswith("_")
 ]

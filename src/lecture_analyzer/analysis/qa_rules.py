@@ -1,26 +1,17 @@
-"""Compatibility bridge for the root QA rules module."""
+"""Src-facing export surface for the consolidated qa_rules module."""
 
-from __future__ import annotations
-
-from pathlib import Path
-import sys
-
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
-
-from analysis import qa_rules as legacy_qa_rules
+from lecture_analyzer.analysis import _qa_rules_impl as qa_rules_impl
+from lecture_analyzer.analysis._qa_rules_impl import *  # noqa: F401,F403
 
 
 def __getattr__(name: str) -> object:
-    """Expose the legacy QA rules module through the src namespace."""
+    """Expose the consolidated qa_rules implementation through src."""
 
-    return getattr(legacy_qa_rules, name)
+    return getattr(qa_rules_impl, name)
 
 
 __all__ = [
     name
-    for name in dir(legacy_qa_rules)
+    for name in dir(qa_rules_impl)
     if not name.startswith("_")
 ]

@@ -1,26 +1,17 @@
-"""Compatibility bridge for the root semantic-retrieval module."""
+"""Src-facing export surface for the consolidated semantic_retrieval module."""
 
-from __future__ import annotations
-
-from pathlib import Path
-import sys
-
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
-
-from analysis import semantic_retrieval as legacy_semantic_retrieval
+from lecture_analyzer.analysis import _semantic_retrieval_impl as semantic_retrieval_impl
+from lecture_analyzer.analysis._semantic_retrieval_impl import *  # noqa: F401,F403
 
 
 def __getattr__(name: str) -> object:
-    """Expose the legacy semantic retrieval module through src."""
+    """Expose the consolidated semantic_retrieval implementation through src."""
 
-    return getattr(legacy_semantic_retrieval, name)
+    return getattr(semantic_retrieval_impl, name)
 
 
 __all__ = [
     name
-    for name in dir(legacy_semantic_retrieval)
+    for name in dir(semantic_retrieval_impl)
     if not name.startswith("_")
 ]

@@ -1,26 +1,17 @@
-"""Compatibility bridge for the root sentence-provenance validation module."""
+"""Src-facing export surface for the consolidated sentence_provenance_validation module."""
 
-from __future__ import annotations
-
-from pathlib import Path
-import sys
-
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
-
-from output import sentence_provenance_validation as legacy_provenance_validation
+from lecture_analyzer.output import _sentence_provenance_validation_impl as sentence_provenance_validation_impl
+from lecture_analyzer.output._sentence_provenance_validation_impl import *  # noqa: F401,F403
 
 
 def __getattr__(name: str) -> object:
-    """Expose the legacy provenance validation module through src."""
+    """Expose the consolidated sentence_provenance_validation implementation through src."""
 
-    return getattr(legacy_provenance_validation, name)
+    return getattr(sentence_provenance_validation_impl, name)
 
 
 __all__ = [
     name
-    for name in dir(legacy_provenance_validation)
+    for name in dir(sentence_provenance_validation_impl)
     if not name.startswith("_")
 ]
