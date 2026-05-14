@@ -40,14 +40,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
             "Official CLI for the ExerPlaza lecture analyzer. The primary path "
-            "runs the real root-based lecture-processing pipeline. A temporary "
+            "runs the real src-based lecture-processing pipeline. A temporary "
             "smoke mode remains available for packaging and diagnostic checks."
         ),
         epilog=(
             "Default guidance: use positional input paths to run the official "
-            "root-based pipeline. Use --smoke together with --input to run the "
-            "temporary diagnostic placeholder flow. The root main.py file "
-            "remains a temporary compatibility wrapper."
+            "lecture analyzer pipeline. Use --smoke together with --input to "
+            "run the temporary diagnostic placeholder flow. The root main.py "
+            "file remains a temporary compatibility wrapper."
         ),
     )
     parser.add_argument(
@@ -55,7 +55,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help=(
             "Run the temporary smoke/diagnostic placeholder flow instead of "
-            "the official root-based pipeline."
+            "the official src-based lecture-processing pipeline."
         ),
     )
     parser.add_argument(
@@ -88,14 +88,14 @@ def build_parser() -> argparse.ArgumentParser:
         "inputs",
         nargs="*",
         help=(
-            "Official positional input paths for the real root-based lecture "
+            "Official positional input paths for the real src-based lecture "
             "processing pipeline."
         ),
     )
     parser.add_argument(
         "--output",
         default=None,
-        help="Output path or directory for the official root-based pipeline.",
+        help="Output path or directory for the official lecture analyzer pipeline.",
     )
     parser.add_argument(
         "--session-id",
@@ -198,7 +198,7 @@ def resolve_smoke_input_argument(args: argparse.Namespace) -> str:
 
 
 def should_use_root_pipeline(args: argparse.Namespace) -> bool:
-    """Decide whether the official root-based pipeline should handle the request."""
+    """Decide whether the official lecture analyzer pipeline should handle the request."""
 
     if args.smoke:
         return False
@@ -259,7 +259,7 @@ def run_smoke_pipeline(args: argparse.Namespace, parser: argparse.ArgumentParser
 
 
 def run_root_pipeline(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
-    """Run the official root-based lecture processing pipeline."""
+    """Run the official src-based lecture processing pipeline."""
 
     from lecture_analyzer.core.config import PipelineConfig as LegacyPipelineConfig
     from lecture_analyzer.core.errors import IngestionError

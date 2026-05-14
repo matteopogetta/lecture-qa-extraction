@@ -1,4 +1,4 @@
-"""Temporary compatibility wrapper for the official lecture-analyzer CLI."""
+"""Temporary compatibility wrapper for the src-based lecture-analyzer CLI."""
 
 from __future__ import annotations
 

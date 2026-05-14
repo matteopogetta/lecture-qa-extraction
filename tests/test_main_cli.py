@@ -10,14 +10,15 @@ from main import build_parser
 class MainCliTests(unittest.TestCase):
     """Exercise the CLI flags exposed by the entry point."""
 
-    def test_help_text_describes_official_root_pipeline(self) -> None:
-        """The parser help should present the root pipeline as the main path."""
+    def test_help_text_describes_official_src_pipeline(self) -> None:
+        """The parser help should present the src pipeline as the main path."""
 
         parser = build_parser()
         help_text = parser.format_help()
 
         self.assertIn("Official CLI", help_text)
-        self.assertIn("root-based", help_text)
+        self.assertIn("src-based", help_text)
+        self.assertIn("compatibility wrapper", help_text)
         self.assertIn("--smoke", help_text)
         self.assertNotIn("bootstrap placeholder flow or the legacy", help_text)
 

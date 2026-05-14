@@ -8,7 +8,7 @@ from lecture_analyzer.main import build_parser, main, should_use_root_pipeline
 
 
 def test_root_pipeline_flags_are_recognized() -> None:
-    """The parser should accept the official root-pipeline flags."""
+    """The parser should accept the official src-pipeline flags."""
 
     parser = build_parser()
 
@@ -30,7 +30,7 @@ def test_root_pipeline_flags_are_recognized() -> None:
 
 
 def test_main_routes_root_arguments_to_root_pipeline(monkeypatch) -> None:
-    """Official root arguments should trigger the root execution path."""
+    """Official pipeline arguments should trigger the main execution path."""
 
     captured: dict[str, Namespace] = {}
 
@@ -87,7 +87,7 @@ def test_smoke_mode_remains_available(monkeypatch) -> None:
 
 
 def test_smoke_flag_disables_root_routing() -> None:
-    """The explicit smoke flag should override root-pipeline auto-routing."""
+    """The explicit smoke flag should override official-pipeline auto-routing."""
 
     parser = build_parser()
     args = parser.parse_args(["--smoke", "--input", "lesson.mp4"])
