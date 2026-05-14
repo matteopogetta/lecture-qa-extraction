@@ -6,9 +6,9 @@
 git clone https://github.com/matteopogetta/lecture-qa-extraction.git
 cd lecture-qa-extraction
 docker compose build
-mkdir -p ~/Documents/ExerPlazaSample/input ~/Documents/ExerPlazaSample/output
-# Put your video in ~/Documents/ExerPlazaSample/input/lezione.mp4
-./scripts/run_demo_docker.sh ~/Documents/ExerPlazaSample/input/lezione.mp4
+mkdir -p ~/Documents/LectureQASample/input ~/Documents/LectureQASample/output
+# Put your video in ~/Documents/LectureQASample/input/lezione.mp4
+./scripts/run_demo_docker.sh ~/Documents/LectureQASample/input/lezione.mp4
 ```
 
 ## 1. Prerequisites
@@ -19,8 +19,8 @@ mkdir -p ~/Documents/ExerPlazaSample/input ~/Documents/ExerPlazaSample/output
 ## 2. Prepare the folders
 
 ```bash
-mkdir -p ~/Documents/ExerPlazaSample/input
-mkdir -p ~/Documents/ExerPlazaSample/output
+mkdir -p ~/Documents/LectureQASample/input
+mkdir -p ~/Documents/LectureQASample/output
 ```
 
 ## 3. Where to put the video
@@ -28,7 +28,7 @@ mkdir -p ~/Documents/ExerPlazaSample/output
 Place the lecture video here:
 
 ```text
-~/Documents/ExerPlazaSample/input/lezione.mp4
+~/Documents/LectureQASample/input/lezione.mp4
 ```
 
 You can also pass a different video path explicitly to the demo script.
@@ -44,13 +44,13 @@ docker compose build
 ## 5. Run the demo
 
 ```bash
-./scripts/run_demo_docker.sh ~/Documents/ExerPlazaSample/input/lezione.mp4
+./scripts/run_demo_docker.sh ~/Documents/LectureQASample/input/lezione.mp4
 ```
 
 If no argument is passed, the script defaults to:
 
 ```text
-~/Documents/ExerPlazaSample/input/lezione.mp4
+~/Documents/LectureQASample/input/lezione.mp4
 ```
 
 ## 6. Expected outputs
@@ -58,15 +58,15 @@ If no argument is passed, the script defaults to:
 The demo writes outputs outside the repository:
 
 ```text
-~/Documents/ExerPlazaSample/output/docker_demo_result
-~/Documents/ExerPlazaSample/output/docker_demo_work
+~/Documents/LectureQASample/output/docker_demo_result
+~/Documents/LectureQASample/output/docker_demo_work
 ```
 
 Typical files to check:
 
-- JSON result: `~/Documents/ExerPlazaSample/output/docker_demo_result/<video_name>_structural.json`
-- Excel debug workbook: `~/Documents/ExerPlazaSample/output/docker_demo_result/<video_name>_structural.xlsx`
-- normalized audio artifacts: `~/Documents/ExerPlazaSample/output/docker_demo_work/normalized_audio/`
+- JSON result: `~/Documents/LectureQASample/output/docker_demo_result/<video_name>_structural.json`
+- Excel debug workbook: `~/Documents/LectureQASample/output/docker_demo_result/<video_name>_structural.xlsx`
+- normalized audio artifacts: `~/Documents/LectureQASample/output/docker_demo_work/normalized_audio/`
 
 ## 7. Known limitations
 
@@ -91,7 +91,7 @@ docker compose build
 Make sure the video exists at:
 
 ```text
-~/Documents/ExerPlazaSample/input/lezione.mp4
+~/Documents/LectureQASample/input/lezione.mp4
 ```
 
 or pass an explicit path:

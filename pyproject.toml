@@ -9,7 +9,7 @@ description = "Standalone prototype for lecture media analysis."
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [
-  { name = "ExerPlaza Prototype Team" }
+  { name = "Lecture QA Extraction Prototype Team" }
 ]
 dependencies = [
   "openpyxl>=3.1,<4",

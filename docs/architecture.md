@@ -2,8 +2,9 @@
 
 ## Overview
 
-This prototype stays independent from ExerPlaza and focuses on producing
-structured outputs that can be integrated later through a dedicated connector.
+This prototype is intentionally platform-neutral and focuses on producing
+structured outputs that can be integrated later into downstream educational
+workflows.
 
 The repository is now in a consolidated src-based phase:
 
@@ -86,12 +87,12 @@ Current separation after consolidation:
 - smoke-mode helpers remain separate in `src/lecture_analyzer/output/writer.py`
 - root `output.*` imports remain available as legacy wrappers
 
-## Future ExerPlaza connector
+## Future platform integration
 
-The future ExerPlaza connector will consume the structured outputs produced by
-the repository. The connector should remain a separate integration layer so
-that the prototype can evolve independently without inheriting platform
-coupling too early.
+Future educational platform integrations can consume the structured outputs
+produced by the repository. That integration layer should remain separate so
+the prototype can evolve independently without inheriting platform coupling
+too early.
 
 ## Next cleanup order
 

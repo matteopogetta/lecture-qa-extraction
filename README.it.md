@@ -1,4 +1,4 @@
-# Prototipo Di Elaborazione Lezioni
+# Lecture QA Extraction
 
 ## Demo Docker Rapida
 
@@ -8,9 +8,9 @@ Per la guida completa passo-passo, vedi `docs/demo_docker.md`.
 git clone https://github.com/matteopogetta/lecture-qa-extraction.git
 cd lecture-qa-extraction
 docker compose build
-mkdir -p ~/Documents/ExerPlazaSample/input ~/Documents/ExerPlazaSample/output
-# Metti il video in ~/Documents/ExerPlazaSample/input/lezione.mp4
-./scripts/run_demo_docker.sh ~/Documents/ExerPlazaSample/input/lezione.mp4
+mkdir -p ~/Documents/LectureQASample/input ~/Documents/LectureQASample/output
+# Metti il video in ~/Documents/LectureQASample/input/lezione.mp4
+./scripts/run_demo_docker.sh ~/Documents/LectureQASample/input/lezione.mp4
 ```
 
 Questo repository contiene un prototipo Python standalone per trasformare media

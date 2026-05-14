@@ -39,8 +39,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     parser = argparse.ArgumentParser(
         description=(
-            "Official CLI for the ExerPlaza lecture analyzer. The primary path "
-            "runs the real src-based lecture-processing pipeline. A temporary "
+            "Official CLI for Lecture QA Extraction. The primary path runs "
+            "the real src-based lecture-processing pipeline. A temporary "
             "smoke mode remains available for packaging and diagnostic checks."
         ),
         epilog=(

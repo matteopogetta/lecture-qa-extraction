@@ -7,9 +7,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-SAMPLE_ROOT="${HOME}/Documents/ExerPlazaSample"
-INPUT_DIR="${SAMPLE_ROOT}/input"
-OUTPUT_DIR="${SAMPLE_ROOT}/output"
+DEFAULT_SAMPLE_ROOT="${HOME}/Documents/LectureQASample"
+INPUT_DIR="${DEFAULT_SAMPLE_ROOT}/input"
+OUTPUT_DIR="${DEFAULT_SAMPLE_ROOT}/output"
 DEFAULT_INPUT_PATH="${INPUT_DIR}/lezione.mp4"
 
 expand_path() {
@@ -31,6 +31,14 @@ expand_path() {
 INPUT_PATH="$(expand_path "${1:-${DEFAULT_INPUT_PATH}}")"
 INPUT_FILENAME="$(basename "${INPUT_PATH}")"
 INPUT_STEM="${INPUT_FILENAME%.*}"
+SAMPLE_ROOT="${DEFAULT_SAMPLE_ROOT}"
+
+if [[ "$(basename "$(dirname "${INPUT_PATH}")")" == "input" ]]; then
+  SAMPLE_ROOT="$(dirname "$(dirname "${INPUT_PATH}")")"
+fi
+
+INPUT_DIR="${SAMPLE_ROOT}/input"
+OUTPUT_DIR="${SAMPLE_ROOT}/output"
 SANITIZED_STEM="$(
   printf '%s' "${INPUT_STEM}" \
     | tr '[:upper:]' '[:lower:]' \

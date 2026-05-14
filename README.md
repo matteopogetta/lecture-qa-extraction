@@ -1,4 +1,4 @@
-# ExerPlaza Lecture Analyzer
+# Lecture QA Extraction
 
 ## Quick Docker Demo
 
@@ -9,15 +9,15 @@ For the full step-by-step guide, see
 git clone https://github.com/matteopogetta/lecture-qa-extraction.git
 cd lecture-qa-extraction
 docker compose build
-mkdir -p ~/Documents/ExerPlazaSample/input ~/Documents/ExerPlazaSample/output
-# Put your video in ~/Documents/ExerPlazaSample/input/lezione.mp4
-./scripts/run_demo_docker.sh ~/Documents/ExerPlazaSample/input/lezione.mp4
+mkdir -p ~/Documents/LectureQASample/input ~/Documents/LectureQASample/output
+# Put your video in ~/Documents/LectureQASample/input/lezione.mp4
+./scripts/run_demo_docker.sh ~/Documents/LectureQASample/input/lezione.mp4
 ```
 
 ## Project overview
 
-ExerPlaza Lecture Analyzer is a standalone Python prototype for transforming
-lecture audio or video into structured, traceable JSON artifacts.
+Lecture QA Extraction is a standalone Python prototype for transforming lecture
+audio or video into structured, traceable JSON artifacts.
 
 The official pipeline is now source-owned under `src/lecture_analyzer`:
 
