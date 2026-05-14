@@ -1,5 +1,19 @@
 # ExerPlaza Lecture Analyzer
 
+## Quick Docker Demo
+
+For the full step-by-step guide, see
+[docs/demo_docker.md](docs/demo_docker.md).
+
+```bash
+git clone https://github.com/matteopogetta/lecture-qa-extraction.git
+cd lecture-qa-extraction
+docker compose build
+mkdir -p ~/Documents/ExerPlazaSample/input ~/Documents/ExerPlazaSample/output
+# Put your video in ~/Documents/ExerPlazaSample/input/lezione.mp4
+./scripts/run_demo_docker.sh ~/Documents/ExerPlazaSample/input/lezione.mp4
+```
+
 ## Project overview
 
 ExerPlaza Lecture Analyzer is a standalone Python prototype for transforming

@@ -1,5 +1,16 @@
 # Docker Demo
 
+## Quick start
+
+```bash
+git clone https://github.com/matteopogetta/lecture-qa-extraction.git
+cd lecture-qa-extraction
+docker compose build
+mkdir -p ~/Documents/ExerPlazaSample/input ~/Documents/ExerPlazaSample/output
+# Put your video in ~/Documents/ExerPlazaSample/input/lezione.mp4
+./scripts/run_demo_docker.sh ~/Documents/ExerPlazaSample/input/lezione.mp4
+```
+
 ## 1. Prerequisites
 
 - Docker Desktop installed and running
