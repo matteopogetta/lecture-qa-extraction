@@ -50,8 +50,8 @@ Stato attuale:
   opzionali
 - `analysis/speaker_role.py` esiste ancora, ma resta un modulo placeholder e
   non fa parte del flusso principale
-- `src/lecture_analyzer` non e ancora la pipeline principale: oggi e un
-  bootstrap/package skeleton e la destinazione futura della migrazione
+- `src/lecture_analyzer` ora espone namespace bridge per tutti i package
+  principali, ma i moduli root restano ancora il source of truth
 - Docker ora include anche i moduli root reali e supporta la CLI ufficiale e
   la smoke mode, ma resta un setup transitorio in vista della migrazione
   src-based
@@ -60,6 +60,15 @@ Documenti utili di stato:
 
 - `docs/repository_status.md`
 - `docs/simplification_plan.md`
+
+Namespace bridge attualmente disponibili:
+
+- `lecture_analyzer.core.*`
+- `lecture_analyzer.input.*`
+- `lecture_analyzer.preprocessing.*`
+- `lecture_analyzer.transcription.*`
+- `lecture_analyzer.analysis.*`
+- `lecture_analyzer.output.*`
 
 ## Requisiti Di Runtime
 
@@ -127,6 +136,8 @@ Nota:
 - `lecture-analyzer` e la CLI ufficiale, anche se passa ancora attraverso il
   layer transitorio `src/lecture_analyzer` mentre la pipeline reale resta nei
   moduli root
+- durante la fase bridge conviene preferire, dove sensato, i namespace
+  `lecture_analyzer.*` per i nuovi import package-facing
 
 ## Superficie CLI
 

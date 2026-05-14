@@ -21,8 +21,8 @@ This is the real functional pipeline used by the project today.
 The repository is in a transition phase.
 
 - The root modules contain the real sentence-centric pipeline.
-- `src/lecture_analyzer` is currently a bootstrap/package skeleton and future
-  migration target.
+- `src/lecture_analyzer` now exposes bridge-based namespaces for all major
+  packages, but the root modules still own the implementation.
 - The root `main.py` is still the temporary wrapper entry point.
 - Docker now includes the real root modules and supports the official CLI help
   path plus smoke-mode verification, but it is still a transitional setup.
@@ -30,6 +30,15 @@ The repository is in a transition phase.
 See [docs/repository_status.md](docs/repository_status.md) for the repository
 status summary and [docs/simplification_plan.md](docs/simplification_plan.md)
 for the cleanup and migration plan.
+
+Bridge namespaces currently available:
+
+- `lecture_analyzer.core.*`
+- `lecture_analyzer.input.*`
+- `lecture_analyzer.preprocessing.*`
+- `lecture_analyzer.transcription.*`
+- `lecture_analyzer.analysis.*`
+- `lecture_analyzer.output.*`
 
 ## Real pipeline
 
@@ -69,12 +78,16 @@ The installable `lecture-analyzer` entry point is the official CLI. It still
 runs through the transitional `src/lecture_analyzer` packaging layer while the
 real pipeline remains in the root modules.
 
+During the bridge phase, prefer the `lecture_analyzer.*` namespace for new
+package-facing imports when practical, while treating the root packages as the
+temporary implementation source of truth.
+
 ## Experimental or transitional areas
 
 The following areas should be treated as transitional, optional, or
 experimental:
 
-- `src/lecture_analyzer` bootstrap/package skeleton
+- bridge-based `src/lecture_analyzer` compatibility layer
 - Docker and Docker Compose integration
 - diarization
 - semantic QA retrieval and reranking
@@ -123,7 +136,7 @@ project-root/
 ├── transcription/
 ├── analysis/
 ├── output/
-├── src/lecture_analyzer/       # bootstrap/package skeleton, future target
+├── src/lecture_analyzer/       # bridge-based public namespace, future home
 ├── docs/
 ├── tests/
 ├── pyproject.toml

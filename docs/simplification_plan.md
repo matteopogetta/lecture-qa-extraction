@@ -49,14 +49,33 @@ in later cleanup steps:
 
 ## E. Next migration steps
 
+The repository cleanup and bridge phase is now complete. The next steps should
+move from namespace compatibility to physical consolidation.
+
 Recommended order for the next repository phases:
 
 1. repository cleanup
 2. real pytest coverage as the default expectation
 3. official CLI path aligned to the real pipeline
-4. migration of `core` into `src`
-5. migration of `input` and `preprocessing`
-6. migration of `transcription`
-7. migration of `analysis` and `output`
-8. Docker realignment
-9. stable GitHub push
+4. bridge-based `lecture_analyzer.*` namespace stabilization
+5. physical consolidation of `core` into `src/lecture_analyzer`
+6. physical consolidation of `input` and `preprocessing`
+7. physical consolidation of `transcription`
+8. physical consolidation of `analysis` and `output`
+9. final removal of redundant root-package bridges
+10. Docker and packaging cleanup after consolidation
+
+## F. Bridge phase outcome
+
+The bridge phase now exposes all major namespaces under `lecture_analyzer.*`
+without changing the runtime source of truth:
+
+- `lecture_analyzer.core.*`
+- `lecture_analyzer.input.*`
+- `lecture_analyzer.preprocessing.*`
+- `lecture_analyzer.transcription.*`
+- `lecture_analyzer.analysis.*`
+- `lecture_analyzer.output.*`
+
+This creates a stable import surface for downstream code and packaging while
+keeping the real implementation in the root packages until the next phase.
