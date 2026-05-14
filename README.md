@@ -2,17 +2,41 @@
 
 ## Quick Docker Demo
 
-For the full step-by-step guide, see
-[docs/demo_docker.md](docs/demo_docker.md).
+Recommended for professors, colleagues, and quick evaluation.
+
+Minimum requirements:
+
+- Docker Desktop
+- about 5-10 GB of free disk space recommended
+- internet access on the first run for model downloads
+
+For the full step-by-step guide, see [docs/demo_docker.md](docs/demo_docker.md).
 
 ```bash
 git clone https://github.com/matteopogetta/lecture-qa-extraction.git
 cd lecture-qa-extraction
 docker compose build
 mkdir -p ~/Documents/LectureQASample/input ~/Documents/LectureQASample/output
-# Put your video in ~/Documents/LectureQASample/input/lezione.mp4
-./scripts/run_demo_docker.sh ~/Documents/LectureQASample/input/lezione.mp4
+# Put your video in ~/Documents/LectureQASample/input/lecture.mp4
+./scripts/run_demo_docker.sh ~/Documents/LectureQASample/input/lecture.mp4
 ```
+
+## Full Pipeline Docker Demo
+
+Use this when you want the full lecture-processing pipeline, including
+alignment, and are willing to wait longer for heavier model loading.
+
+- helper script: `./scripts/run_full_pipeline_docker.sh`
+- direct CLI examples: [docs/demo_docker.md](docs/demo_docker.md)
+- optional diarization remains experimental and is documented separately
+
+## Local Python Installation
+
+Available for advanced local development, but not recommended for fast public
+evaluation. It is more fragile than Docker and depends on host-level `ffmpeg`
+and optional ML packages.
+
+Guide: [docs/local_installation.md](docs/local_installation.md)
 
 ## Project overview
 

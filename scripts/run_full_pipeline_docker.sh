@@ -59,25 +59,26 @@ if [[ ! -f "${INPUT_PATH}" ]]; then
   echo "  ${DEFAULT_INPUT_PATH}" >&2
   echo >&2
   echo "Example command:" >&2
-  echo "  ./scripts/run_demo_docker.sh ${DEFAULT_INPUT_PATH}" >&2
+  echo "  ./scripts/run_full_pipeline_docker.sh ${DEFAULT_INPUT_PATH}" >&2
   exit 1
 fi
 
 CONTAINER_INPUT_PATH="/sample/input/${INPUT_FILENAME}"
-CONTAINER_OUTPUT_PATH="/sample/output/docker_demo_result"
-CONTAINER_WORK_PATH="/sample/output/docker_demo_work"
-HOST_RESULT_DIR="${OUTPUT_DIR}/docker_demo_result"
-HOST_WORK_DIR="${OUTPUT_DIR}/docker_demo_work"
+CONTAINER_OUTPUT_PATH="/sample/output/docker_full_result"
+CONTAINER_WORK_PATH="/sample/output/docker_full_work"
+HOST_RESULT_DIR="${OUTPUT_DIR}/docker_full_result"
+HOST_WORK_DIR="${OUTPUT_DIR}/docker_full_work"
 EXPECTED_JSON_PATH="${HOST_RESULT_DIR}/${SANITIZED_STEM}_structural.json"
 EXPECTED_EXCEL_PATH="${HOST_WORK_DIR}/debug_${SANITIZED_STEM}_structural.xlsx"
 NORMALIZED_AUDIO_DIR="${HOST_WORK_DIR}/normalized_audio"
+ALIGNMENT_DIR="${HOST_WORK_DIR}/alignment"
 
 mkdir -p "${HOST_RESULT_DIR}"
 mkdir -p "${HOST_WORK_DIR}"
 
 cd "${PROJECT_ROOT}"
 
-echo "Running Docker demo with input:"
+echo "Running full Docker pipeline with input:"
 echo "  ${INPUT_PATH}"
 echo
 
@@ -87,15 +88,16 @@ docker compose run --rm \
   "${CONTAINER_INPUT_PATH}" \
   --output "${CONTAINER_OUTPUT_PATH}" \
   --work-dir "${CONTAINER_WORK_PATH}" \
-  --session-id docker_demo \
-  --disable-alignment \
+  --session-id docker_full \
   --segmentation-mode structural
 
 echo
-echo "Demo completed."
+echo "Full pipeline completed."
 echo "JSON output:"
 echo "  ${EXPECTED_JSON_PATH}"
 echo "Excel debug output:"
 echo "  ${EXPECTED_EXCEL_PATH}"
 echo "Normalized audio directory:"
 echo "  ${NORMALIZED_AUDIO_DIR}"
+echo "Alignment artifacts directory:"
+echo "  ${ALIGNMENT_DIR}"

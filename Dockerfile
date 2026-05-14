@@ -11,6 +11,7 @@ WORKDIR /app
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir faster-whisper whisperx
 
 COPY pyproject.toml README.md .env.example main.py ./
 COPY core ./core

@@ -2,6 +2,14 @@
 
 ## Demo Docker Rapida
 
+Consigliata per professori, colleghi e valutazione veloce.
+
+Requisiti minimi:
+
+- Docker Desktop
+- circa 5-10 GB liberi consigliati
+- connessione internet al primo avvio per il download dei modelli
+
 Per la guida completa passo-passo, vedi `docs/demo_docker.md`.
 
 ```bash
@@ -9,9 +17,26 @@ git clone https://github.com/matteopogetta/lecture-qa-extraction.git
 cd lecture-qa-extraction
 docker compose build
 mkdir -p ~/Documents/LectureQASample/input ~/Documents/LectureQASample/output
-# Metti il video in ~/Documents/LectureQASample/input/lezione.mp4
-./scripts/run_demo_docker.sh ~/Documents/LectureQASample/input/lezione.mp4
+# Metti il video in ~/Documents/LectureQASample/input/lecture.mp4
+./scripts/run_demo_docker.sh ~/Documents/LectureQASample/input/lecture.mp4
 ```
+
+## Demo Docker Full Pipeline
+
+Usa questa modalita quando vuoi la pipeline completa, con alignment attivo,
+accettando tempi e download piu pesanti.
+
+- script helper: `./scripts/run_full_pipeline_docker.sh`
+- esempi CLI diretti: `docs/demo_docker.md`
+- la diarization resta opzionale e sperimentale
+
+## Installazione Locale Python
+
+Disponibile per sviluppo locale avanzato, ma sconsigliata per una valutazione
+rapida. E piu fragile della demo Docker e dipende da `ffmpeg` e da pacchetti
+ML opzionali sul sistema host.
+
+Guida: `docs/local_installation.md`
 
 Questo repository contiene un prototipo Python standalone per trasformare media
 di lezione audio/video in artefatti JSON strutturati e tracciabili.
