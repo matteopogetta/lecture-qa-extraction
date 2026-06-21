@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import unittest
 
+from lecture_analyzer.main import should_use_root_pipeline
 from main import build_parser
 
 
@@ -57,6 +58,27 @@ class MainCliTests(unittest.TestCase):
 
         self.assertTrue(args.smoke)
         self.assertEqual(args.input_path, "lesson.mp4")
+
+    def test_pipeline_profile_flag_is_parsed(self) -> None:
+        """The CLI should expose opt-in execution profiles."""
+
+        parser = build_parser()
+
+        args = parser.parse_args(["--pipeline-profile", "light", "lesson.mp4"])
+
+        self.assertEqual(args.pipeline_profile, "light")
+        self.assertEqual(args.inputs, ["lesson.mp4"])
+
+    def test_pipeline_profile_selects_real_pipeline(self) -> None:
+        """A non-default profile should route to the real pipeline path."""
+
+        parser = build_parser()
+
+        args = parser.parse_args(
+            ["--pipeline-profile", "light", "--input", "lesson.mp4"],
+        )
+
+        self.assertTrue(should_use_root_pipeline(args))
 
 
 if __name__ == "__main__":

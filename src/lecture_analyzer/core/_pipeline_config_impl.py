@@ -7,6 +7,39 @@ from pathlib import Path
 
 
 SUPPORTED_NORMALIZED_AUDIO_FORMATS = {"wav", "flac"}
+SUPPORTED_PIPELINE_PROFILES = {"current", "light", "full", "diagnostic"}
+
+PIPELINE_PROFILE_SETTINGS: dict[str, dict[str, object]] = {
+    "current": {},
+    "light": {
+        "transcript_alignment_enabled": False,
+        "diarization_enabled": False,
+        "qa_answer_search_strategy": "local_rule_based",
+        "qa_semantic_retrieval_enabled": False,
+        "qa_answer_ranking_strategy": "rule_based",
+        "qa_semantic_reranking_enabled": False,
+        "export_debug_excel": False,
+    },
+    "full": {
+        "transcript_alignment_enabled": True,
+        "diarization_enabled": True,
+        "qa_answer_search_strategy": "semantic_retrieval",
+        "qa_semantic_retrieval_enabled": True,
+        "qa_answer_ranking_strategy": "semantic_reranker",
+        "qa_semantic_reranking_enabled": True,
+        "export_debug_excel": True,
+    },
+    "diagnostic": {
+        "transcript_alignment_enabled": True,
+        "diarization_enabled": True,
+        "segmentation_mode": "both",
+        "qa_answer_search_strategy": "semantic_retrieval",
+        "qa_semantic_retrieval_enabled": True,
+        "qa_answer_ranking_strategy": "semantic_reranker",
+        "qa_semantic_reranking_enabled": True,
+        "export_debug_excel": True,
+    },
+}
 
 
 @dataclass(slots=True)
@@ -14,6 +47,7 @@ class PipelineConfig:
     """Runtime configuration for the processing pipeline."""
 
     # Input and preprocessing defaults.
+    pipeline_profile: str = "current"
     working_directory: Path = Path("artifacts")
     audio_extensions: tuple[str, ...] = (".wav", ".mp3", ".m4a", ".aac", ".flac")
     video_extensions: tuple[str, ...] = (".mp4", ".mov", ".mkv", ".avi")
@@ -263,8 +297,42 @@ class PipelineConfig:
     def __post_init__(self) -> None:
         """Normalize configurable paths after initialization."""
 
+        self.pipeline_profile = self._normalize_pipeline_profile(
+            self.pipeline_profile,
+        )
+        self._apply_pipeline_profile_defaults()
+        self._normalize_configurable_values()
+
+    def apply_overrides(self, **overrides: object) -> None:
+        """Apply explicit runtime overrides after profile defaults."""
+
+        profile_override = overrides.pop("pipeline_profile", None)
+        if profile_override is not None:
+            self.pipeline_profile = self._normalize_pipeline_profile(
+                str(profile_override),
+            )
+            self._apply_pipeline_profile_defaults()
+
+        for name, value in overrides.items():
+            if not hasattr(self, name):
+                raise AttributeError(f"Unknown pipeline configuration option: {name}")
+            setattr(self, name, value)
+        self._normalize_configurable_values()
+
+    def _apply_pipeline_profile_defaults(self) -> None:
+        """Apply the selected profile before explicit runtime overrides."""
+
+        for name, value in PIPELINE_PROFILE_SETTINGS[self.pipeline_profile].items():
+            setattr(self, name, value)
+
+    def _normalize_configurable_values(self) -> None:
+        """Normalize configurable values after construction or overrides."""
+
         # Resolve path-like settings immediately so every component works with
         # absolute, normalized locations rather than caller-specific strings.
+        self.pipeline_profile = self._normalize_pipeline_profile(
+            self.pipeline_profile,
+        )
         self.working_directory = self.working_directory.expanduser().resolve()
         if self.normalized_audio_directory is not None:
             self.normalized_audio_directory = (
@@ -720,6 +788,18 @@ class PipelineConfig:
         if normalized_extension.startswith("."):
             return normalized_extension
         return f".{normalized_extension}"
+
+    @staticmethod
+    def _normalize_pipeline_profile(profile: str) -> str:
+        """Return a supported pipeline profile name."""
+
+        normalized_profile = str(profile).strip().lower().replace("-", "_")
+        if normalized_profile in {"default", "compat", "compatibility"}:
+            normalized_profile = "current"
+        if normalized_profile not in SUPPORTED_PIPELINE_PROFILES:
+            supported = ", ".join(sorted(SUPPORTED_PIPELINE_PROFILES))
+            raise ValueError(f"pipeline_profile must be one of: {supported}.")
+        return normalized_profile
 
     @staticmethod
     def _normalize_optional_positive_int(value: int | None) -> int | None:

@@ -35,6 +35,13 @@ defining the center of the project:
 - text-only transcription cache fallback
 - `disable-alignment` compatibility mode
 
+These branches are now grouped behind opt-in pipeline profiles:
+
+- `current`: preserves the existing default behavior
+- `light`: favors fast local/CI checks by disabling heavier optional branches
+- `full`: enables quality-oriented optional branches
+- `diagnostic`: enables comparison and debug-oriented branches
+
 ## D. Removal or deprecation candidates
 
 The following areas are good candidates for deprecation, isolation, or removal

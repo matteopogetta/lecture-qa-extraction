@@ -108,6 +108,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="Working directory for intermediate official-pipeline artifacts.",
     )
     parser.add_argument(
+        "--pipeline-profile",
+        default="current",
+        choices=("current", "light", "full", "diagnostic"),
+        help=(
+            "Execution profile for optional pipeline branches. The default "
+            "'current' preserves the existing behavior."
+        ),
+    )
+    parser.add_argument(
         "--normalized-audio-format",
         default="wav",
         choices=("wav", "flac"),
@@ -209,6 +218,7 @@ def should_use_root_pipeline(args: argparse.Namespace) -> bool:
             args.output is not None,
             args.session_id is not None,
             args.work_dir != "artifacts",
+            args.pipeline_profile != "current",
             args.normalized_audio_format != "wav",
             args.force_normalization,
             args.transcription_cache_dir is not None,
@@ -277,27 +287,42 @@ def run_root_pipeline(args: argparse.Namespace, parser: argparse.ArgumentParser)
         )
 
     config = LegacyPipelineConfig(
+        pipeline_profile=args.pipeline_profile,
         working_directory=Path(args.work_dir),
-        normalized_audio_format=args.normalized_audio_format,
-        overwrite_normalized_audio=args.force_normalization,
-        transcription_cache_enabled=not args.disable_transcription_cache,
-        transcription_compute_type=args.transcription_compute_type,
-        transcription_cache_directory=(
-            Path(args.transcription_cache_dir)
-            if args.transcription_cache_dir is not None
-            else None
-        ),
-        force_recompute=args.from_scratch,
-        transcript_alignment_enabled=not args.disable_alignment,
-        transcript_alignment_model_name=args.alignment_model,
-        transcript_alignment_device=args.alignment_device,
-        diarization_enabled=args.enable_diarization,
-        diarization_device=args.diarization_device,
-        diarization_num_speakers=args.num_speakers,
-        diarization_min_speakers=args.min_speakers,
-        diarization_max_speakers=args.max_speakers,
-        segmentation_mode=args.segmentation_mode,
     )
+    config_overrides: dict[str, object] = {
+        "normalized_audio_format": args.normalized_audio_format,
+        "transcription_compute_type": args.transcription_compute_type,
+    }
+    if args.force_normalization:
+        config_overrides["overwrite_normalized_audio"] = True
+    if args.disable_transcription_cache:
+        config_overrides["transcription_cache_enabled"] = False
+    if args.transcription_cache_dir is not None:
+        config_overrides["transcription_cache_directory"] = Path(
+            args.transcription_cache_dir,
+        )
+    if args.from_scratch:
+        config_overrides["force_recompute"] = True
+    if args.disable_alignment:
+        config_overrides["transcript_alignment_enabled"] = False
+    if args.alignment_model is not None:
+        config_overrides["transcript_alignment_model_name"] = args.alignment_model
+    if args.alignment_device != "cpu":
+        config_overrides["transcript_alignment_device"] = args.alignment_device
+    if args.enable_diarization:
+        config_overrides["diarization_enabled"] = True
+    if args.diarization_device != "cpu":
+        config_overrides["diarization_device"] = args.diarization_device
+    if args.num_speakers is not None:
+        config_overrides["diarization_num_speakers"] = args.num_speakers
+    if args.min_speakers is not None:
+        config_overrides["diarization_min_speakers"] = args.min_speakers
+    if args.max_speakers is not None:
+        config_overrides["diarization_max_speakers"] = args.max_speakers
+    if args.segmentation_mode != "structural":
+        config_overrides["segmentation_mode"] = args.segmentation_mode
+    config.apply_overrides(**config_overrides)
     pipeline = LegacyPipeline(config=config)
     output_path = (
         Path(args.output)

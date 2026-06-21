@@ -38,6 +38,22 @@ and optional ML packages.
 
 Guide: [docs/local_installation.md](docs/local_installation.md)
 
+Minimal local setup:
+
+```bash
+python3.11 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+pip install -e .
+pip install -r requirements.txt
+```
+
+After activation, the CLI is available as:
+
+```bash
+lecture-analyzer --help
+```
+
 ## Project overview
 
 Lecture QA Extraction is a standalone Python prototype for transforming lecture
@@ -93,25 +109,38 @@ Key properties:
 The installable `lecture-analyzer` entry point is the official CLI:
 
 ```bash
-./.venv-system/bin/lecture-analyzer --help
+./.venv/bin/lecture-analyzer --help
 ```
 
 Typical pipeline invocation:
 
 ```bash
-./.venv-system/bin/lecture-analyzer /path/to/input.mp4 --output /path/to/output.json
+./.venv/bin/lecture-analyzer /path/to/input.mp4 --output /path/to/output.json
+```
+
+Pipeline profiles are opt-in presets for optional branches:
+
+- `current`: default; preserves the existing behavior
+- `light`: disables heavier optional branches for fast local checks
+- `full`: enables the heavier quality-oriented optional branches
+- `diagnostic`: enables comparison/debug-oriented branches
+
+Example:
+
+```bash
+./.venv/bin/lecture-analyzer /path/to/input.mp4 --output /path/to/output.json --pipeline-profile light
 ```
 
 Run the full test suite:
 
 ```bash
-./.venv-system/bin/python -m pytest
+./.venv/bin/python -m pytest
 ```
 
 The root wrapper remains available for compatibility:
 
 ```bash
-./.venv-system/bin/python main.py --help
+./.venv/bin/python main.py --help
 ```
 
 For a professor-friendly Docker-only demo flow, see

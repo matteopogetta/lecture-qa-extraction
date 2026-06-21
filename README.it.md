@@ -38,6 +38,22 @@ ML opzionali sul sistema host.
 
 Guida: `docs/local_installation.md`
 
+Setup locale minimo:
+
+```bash
+python3.11 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+pip install -e .
+pip install -r requirements.txt
+```
+
+Dopo l'attivazione, la CLI e disponibile come:
+
+```bash
+lecture-analyzer --help
+```
+
 Questo repository contiene un prototipo Python standalone per trasformare media
 di lezione audio/video in artefatti JSON strutturati e tracciabili.
 
@@ -136,37 +152,50 @@ Note:
 Run normale:
 
 ```bash
-./.venv-system/bin/python main.py sample_inputs --output artifacts/session.json
+./.venv/bin/python main.py sample_inputs --output artifacts/session.json
 ```
 
 Run completa da zero:
 
 ```bash
-./.venv-system/bin/python main.py sample_inputs/SSL1P1.mp4 --output artifacts/session.json --from-scratch
+./.venv/bin/python main.py sample_inputs/SSL1P1.mp4 --output artifacts/session.json --from-scratch
 ```
 
 Run con segmentazione adaptive e diarization:
 
 ```bash
-./.venv-system/bin/python main.py sample_inputs/SSL1P1.mp4 --output artifacts/session.json --segmentation-mode adaptive --enable-diarization
+./.venv/bin/python main.py sample_inputs/SSL1P1.mp4 --output artifacts/session.json --segmentation-mode adaptive --enable-diarization
 ```
 
 Run con tutte le modalita di segmentazione in una sola esecuzione:
 
 ```bash
-./.venv-system/bin/python main.py sample_inputs/SSL1P1.mp4 --output artifacts/session.json --segmentation-mode both
+./.venv/bin/python main.py sample_inputs/SSL1P1.mp4 --output artifacts/session.json --segmentation-mode both
 ```
 
 Run senza alignment, mantenendo il ramo basato solo sulla trascrizione:
 
 ```bash
-./.venv-system/bin/python main.py sample_inputs/SSL1P1.mp4 --output artifacts/session.json --disable-alignment
+./.venv/bin/python main.py sample_inputs/SSL1P1.mp4 --output artifacts/session.json --disable-alignment
 ```
 
 Run con `compute_type` esplicito per faster-whisper:
 
 ```bash
-./.venv-system/bin/python main.py sample_inputs --output artifacts/session.json --transcription-compute-type float32
+./.venv/bin/python main.py sample_inputs --output artifacts/session.json --transcription-compute-type float32
+```
+
+Profili pipeline opt-in:
+
+- `current`: default; conserva il comportamento esistente
+- `light`: disattiva i rami opzionali piu pesanti per controlli locali rapidi
+- `full`: abilita i rami opzionali orientati alla massima qualita
+- `diagnostic`: abilita rami di confronto e debug
+
+Esempio:
+
+```bash
+./.venv/bin/python main.py sample_inputs --output artifacts/session.json --pipeline-profile light
 ```
 
 Nota:
@@ -189,6 +218,7 @@ Opzioni principali:
 - `--output`
 - `--session-id`
 - `--work-dir`
+- `--pipeline-profile`
 - `--normalized-audio-format`
 - `--force-normalization`
 - `--transcription-cache-dir`
