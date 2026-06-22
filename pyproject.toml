@@ -23,6 +23,7 @@ test = [
 
 [project.scripts]
 lecture-analyzer = "lecture_analyzer.main:main"
+lecture-analyzer-compare-evaluations = "lecture_analyzer.output.evaluation_comparison_exporter:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

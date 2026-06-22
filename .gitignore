@@ -33,6 +33,7 @@ temp/
 tmp/
 artifacts/
 artifacts_*/
+evaluations/
 
 # Heavy local media files
 *.mp4

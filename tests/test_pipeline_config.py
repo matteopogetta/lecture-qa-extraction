@@ -24,6 +24,8 @@ class PipelineConfigProfileTests(unittest.TestCase):
         self.assertEqual(config.qa_answer_ranking_strategy, "semantic_reranker")
         self.assertTrue(config.qa_semantic_reranking_enabled)
         self.assertTrue(config.export_debug_excel)
+        self.assertFalse(config.export_ai_review_packet)
+        self.assertFalse(config.export_evaluation_run)
 
     def test_light_profile_disables_heavy_optional_branches(self) -> None:
         """The light profile should favor fast local runs and CI checks."""
@@ -38,6 +40,8 @@ class PipelineConfigProfileTests(unittest.TestCase):
         self.assertEqual(config.qa_answer_ranking_strategy, "rule_based")
         self.assertFalse(config.qa_semantic_reranking_enabled)
         self.assertFalse(config.export_debug_excel)
+        self.assertFalse(config.export_ai_review_packet)
+        self.assertFalse(config.export_evaluation_run)
 
     def test_diagnostic_profile_runs_comparison_and_debug_outputs(self) -> None:
         """The diagnostic profile should enable the richer comparison surface."""
@@ -49,6 +53,7 @@ class PipelineConfigProfileTests(unittest.TestCase):
         self.assertTrue(config.diarization_enabled)
         self.assertEqual(config.segmentation_mode, "both")
         self.assertTrue(config.export_debug_excel)
+        self.assertTrue(config.export_ai_review_packet)
 
     def test_apply_overrides_keeps_explicit_choices_after_profile_defaults(self) -> None:
         """Explicit runtime settings should win over the selected profile."""
@@ -60,6 +65,10 @@ class PipelineConfigProfileTests(unittest.TestCase):
             diarization_enabled=False,
             segmentation_mode="adaptive",
             export_debug_excel=False,
+            export_ai_review_packet=False,
+            export_evaluation_run=True,
+            evaluation_input_label="ICWROS",
+            evaluation_run_label="2026-06-21_light",
         )
 
         self.assertEqual(config.pipeline_profile, "diagnostic")
@@ -67,6 +76,10 @@ class PipelineConfigProfileTests(unittest.TestCase):
         self.assertFalse(config.diarization_enabled)
         self.assertEqual(config.segmentation_mode, "adaptive")
         self.assertFalse(config.export_debug_excel)
+        self.assertFalse(config.export_ai_review_packet)
+        self.assertTrue(config.export_evaluation_run)
+        self.assertEqual(config.evaluation_input_label, "ICWROS")
+        self.assertEqual(config.evaluation_run_label, "2026-06-21_light")
 
     def test_unknown_profile_is_rejected(self) -> None:
         """Unknown profile labels should fail early instead of silently drifting."""

@@ -80,6 +80,46 @@ class MainCliTests(unittest.TestCase):
 
         self.assertTrue(should_use_root_pipeline(args))
 
+    def test_ai_review_packet_flags_are_parsed(self) -> None:
+        """The CLI should expose optional Markdown review packet export."""
+
+        parser = build_parser()
+
+        args = parser.parse_args(
+            [
+                "lesson.mp4",
+                "--export-ai-review-packet",
+                "--ai-review-packet-path",
+                "review_packets",
+            ],
+        )
+
+        self.assertTrue(args.export_ai_review_packet)
+        self.assertEqual(args.ai_review_packet_path, "review_packets")
+
+    def test_evaluation_run_flags_are_parsed(self) -> None:
+        """The CLI should expose persistent local evaluation-run export."""
+
+        parser = build_parser()
+
+        args = parser.parse_args(
+            [
+                "lesson.mp4",
+                "--export-evaluation-run",
+                "--evaluation-root",
+                "evaluations",
+                "--evaluation-input-label",
+                "ICWROS",
+                "--evaluation-run-label",
+                "2026-06-21_light",
+            ],
+        )
+
+        self.assertTrue(args.export_evaluation_run)
+        self.assertEqual(args.evaluation_root, "evaluations")
+        self.assertEqual(args.evaluation_input_label, "ICWROS")
+        self.assertEqual(args.evaluation_run_label, "2026-06-21_light")
+
 
 if __name__ == "__main__":
     unittest.main()

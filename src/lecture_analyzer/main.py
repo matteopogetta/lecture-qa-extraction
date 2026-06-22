@@ -195,6 +195,51 @@ def build_parser() -> argparse.ArgumentParser:
         default="structural",
         help="Official segmentation mode: structural, windowed, adaptive, or both.",
     )
+    parser.add_argument(
+        "--export-ai-review-packet",
+        action="store_true",
+        help=(
+            "Write a local Markdown packet with transcript, QA/C candidates, "
+            "and reviewer instructions for external human or chatbot review."
+        ),
+    )
+    parser.add_argument(
+        "--ai-review-packet-path",
+        default=None,
+        help=(
+            "Optional Markdown file or directory for AI/human review packets. "
+            "Defaults to the pipeline working directory."
+        ),
+    )
+    parser.add_argument(
+        "--export-evaluation-run",
+        action="store_true",
+        help=(
+            "Write a persistent local evaluation run folder with session JSON, "
+            "review packet, AI review placeholder, and metrics."
+        ),
+    )
+    parser.add_argument(
+        "--evaluation-root",
+        default=None,
+        help=(
+            "Root directory for local evaluation history. Defaults to "
+            "./evaluations, which is ignored by Git."
+        ),
+    )
+    parser.add_argument(
+        "--evaluation-input-label",
+        default=None,
+        help="Optional stable input label used under the evaluation root.",
+    )
+    parser.add_argument(
+        "--evaluation-run-label",
+        default=None,
+        help=(
+            "Advanced override for the run folder label. Omit it to generate "
+            "a unique timestamp/profile/mode label automatically."
+        ),
+    )
     return parser
 
 
@@ -234,6 +279,12 @@ def should_use_root_pipeline(args: argparse.Namespace) -> bool:
             args.min_speakers is not None,
             args.max_speakers is not None,
             args.segmentation_mode != "structural",
+            args.export_ai_review_packet,
+            args.ai_review_packet_path is not None,
+            args.export_evaluation_run,
+            args.evaluation_root is not None,
+            args.evaluation_input_label is not None,
+            args.evaluation_run_label is not None,
         ],
     )
 
@@ -322,6 +373,18 @@ def run_root_pipeline(args: argparse.Namespace, parser: argparse.ArgumentParser)
         config_overrides["diarization_max_speakers"] = args.max_speakers
     if args.segmentation_mode != "structural":
         config_overrides["segmentation_mode"] = args.segmentation_mode
+    if args.export_ai_review_packet:
+        config_overrides["export_ai_review_packet"] = True
+    if args.ai_review_packet_path is not None:
+        config_overrides["ai_review_packet_path"] = Path(args.ai_review_packet_path)
+    if args.export_evaluation_run:
+        config_overrides["export_evaluation_run"] = True
+    if args.evaluation_root is not None:
+        config_overrides["evaluation_root_directory"] = Path(args.evaluation_root)
+    if args.evaluation_input_label is not None:
+        config_overrides["evaluation_input_label"] = args.evaluation_input_label
+    if args.evaluation_run_label is not None:
+        config_overrides["evaluation_run_label"] = args.evaluation_run_label
     config.apply_overrides(**config_overrides)
     pipeline = LegacyPipeline(config=config)
     output_path = (

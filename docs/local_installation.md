@@ -68,6 +68,20 @@ pip install whisperx
 ```
 
 Optional diarization support is heavier and should be treated as experimental.
+If a gated pyannote model requires authentication, set a Hugging Face token
+before running with `--enable-diarization`:
+
+```bash
+export HUGGINGFACE_HUB_TOKEN="hf_xxxxxxxxxxxxxxxxx"
+```
+
+You can also put it in a local `.env` file:
+
+```env
+HUGGINGFACE_HUB_TOKEN=hf_xxxxxxxxxxxxxxxxx
+```
+
+The project also accepts `HF_TOKEN`. Local `.env` files are ignored by Git.
 
 ## 6. Install ffmpeg
 

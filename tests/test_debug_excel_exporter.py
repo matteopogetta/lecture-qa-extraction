@@ -2309,6 +2309,123 @@ class DebugExcelExporterTests(unittest.TestCase):
                 "manual_debug_lesson_structural.xlsx",
             )
 
+    def test_pipeline_invokes_ai_review_packet_only_when_enabled(self) -> None:
+        """The pipeline should call the Markdown review exporter only behind the flag."""
+
+        with tempfile.TemporaryDirectory() as temp_directory:
+            temp_path = Path(temp_directory)
+            media_path = temp_path / "lesson.wav"
+            media_path.write_bytes(b"placeholder")
+
+            enabled_config = PipelineConfig(
+                working_directory=temp_path / "artifacts_enabled",
+                segmentation_mode="structural",
+                transcript_alignment_enabled=False,
+                diarization_enabled=False,
+                enable_qa_extraction=False,
+                export_debug_excel=False,
+                export_ai_review_packet=True,
+                ai_review_packet_path=Path("review_packets"),
+            )
+            enabled_pipeline = self._build_fake_pipeline(enabled_config, media_path)
+
+            with patch(
+                "lecture_analyzer.core._processing_pipeline_impl.export_ai_review_packet",
+            ) as export_mock:
+                enabled_pipeline.process(
+                    media_path,
+                    output_path=temp_path / "exports_enabled",
+                )
+
+            export_mock.assert_called_once()
+            self.assertEqual(
+                Path(export_mock.call_args.args[1]).name,
+                "lesson_structural.review.md",
+            )
+
+            disabled_config = PipelineConfig(
+                working_directory=temp_path / "artifacts_disabled",
+                segmentation_mode="structural",
+                transcript_alignment_enabled=False,
+                diarization_enabled=False,
+                enable_qa_extraction=False,
+                export_debug_excel=False,
+                export_ai_review_packet=False,
+            )
+            disabled_pipeline = self._build_fake_pipeline(disabled_config, media_path)
+
+            with patch(
+                "lecture_analyzer.core._processing_pipeline_impl.export_ai_review_packet",
+            ) as export_mock:
+                disabled_pipeline.process(
+                    media_path,
+                    output_path=temp_path / "exports_disabled",
+                )
+
+            export_mock.assert_not_called()
+
+    def test_pipeline_invokes_evaluation_run_export_only_when_enabled(self) -> None:
+        """The pipeline should create persistent evaluation runs only behind the flag."""
+
+        with tempfile.TemporaryDirectory() as temp_directory:
+            temp_path = Path(temp_directory)
+            media_path = temp_path / "lesson.wav"
+            media_path.write_bytes(b"placeholder")
+
+            enabled_config = PipelineConfig(
+                working_directory=temp_path / "artifacts_enabled",
+                segmentation_mode="structural",
+                transcript_alignment_enabled=False,
+                diarization_enabled=False,
+                enable_qa_extraction=False,
+                export_debug_excel=False,
+                export_evaluation_run=True,
+                evaluation_root_directory=temp_path / "evaluations",
+                evaluation_input_label="lesson",
+                evaluation_run_label="2026-06-21_light",
+            )
+            enabled_pipeline = self._build_fake_pipeline(enabled_config, media_path)
+
+            with patch(
+                "lecture_analyzer.core._processing_pipeline_impl.export_evaluation_run",
+            ) as export_mock:
+                enabled_pipeline.process(
+                    media_path,
+                    output_path=temp_path / "exports_enabled",
+                )
+
+            export_mock.assert_called_once()
+            self.assertEqual(
+                export_mock.call_args.kwargs["evaluation_root"],
+                (temp_path / "evaluations").resolve(),
+            )
+            self.assertEqual(export_mock.call_args.kwargs["input_label"], "lesson")
+            self.assertEqual(
+                export_mock.call_args.kwargs["run_label"],
+                "2026-06-21_light",
+            )
+
+            disabled_config = PipelineConfig(
+                working_directory=temp_path / "artifacts_disabled",
+                segmentation_mode="structural",
+                transcript_alignment_enabled=False,
+                diarization_enabled=False,
+                enable_qa_extraction=False,
+                export_debug_excel=False,
+                export_evaluation_run=False,
+            )
+            disabled_pipeline = self._build_fake_pipeline(disabled_config, media_path)
+
+            with patch(
+                "lecture_analyzer.core._processing_pipeline_impl.export_evaluation_run",
+            ) as export_mock:
+                disabled_pipeline.process(
+                    media_path,
+                    output_path=temp_path / "exports_disabled",
+                )
+
+            export_mock.assert_not_called()
+
     @staticmethod
     def _build_fake_pipeline(
         config: PipelineConfig,

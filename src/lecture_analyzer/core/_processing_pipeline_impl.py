@@ -18,7 +18,9 @@ from lecture_analyzer.core.models import LectureSession
 from lecture_analyzer.core.timing import PipelineTimer, utc_now_iso
 from lecture_analyzer.core.types import ProcessingStatus
 from lecture_analyzer.input.session_loader import SessionLoader
+from lecture_analyzer.output.ai_review_packet_exporter import export_ai_review_packet
 from lecture_analyzer.output.debug_excel_exporter import export_run_to_excel
+from lecture_analyzer.output.evaluation_run_exporter import export_evaluation_run
 from lecture_analyzer.output.json_exporter import JsonExporter
 from lecture_analyzer.preprocessing.audio_normalizer import AudioNormalizer
 from lecture_analyzer.transcription.pyannote_diarizer import PyannoteDiarizer
@@ -474,6 +476,74 @@ class LectureProcessingPipeline:
                         )
                         self._sync_timing_summary(session)
                         LOGGER.info("debug_excel_export: skipped | debug export disabled")
+                    if self.config.export_ai_review_packet:
+                        with timer.measure(
+                            "ai_review_packet_export",
+                            metadata={"segmentation_mode": mode},
+                        ) as review_stage:
+                            ai_review_packet_path = self._resolve_ai_review_packet_path(
+                                exported_json_path=exported_path,
+                            )
+                            export_ai_review_packet(
+                                session,
+                                ai_review_packet_path,
+                                source_json_path=exported_path,
+                            )
+                            review_stage.metadata["ai_review_packet_path"] = str(
+                                ai_review_packet_path,
+                            )
+                            self._finalize_stage_report(
+                                review_stage,
+                                status="executed",
+                            )
+                        self._sync_timing_summary(session)
+                        self._log_stage_completion(review_stage)
+                    else:
+                        timer.record(
+                            "ai_review_packet_export",
+                            status="skipped",
+                            note="ai_review_packet_export_disabled",
+                            metadata={"segmentation_mode": mode},
+                        )
+                        self._sync_timing_summary(session)
+                        LOGGER.info(
+                            "ai_review_packet_export: skipped | review packet disabled",
+                        )
+                    if self.config.export_evaluation_run:
+                        with timer.measure(
+                            "evaluation_run_export",
+                            metadata={"segmentation_mode": mode},
+                        ) as evaluation_stage:
+                            evaluation_run_path = export_evaluation_run(
+                                session,
+                                source_json_path=exported_path,
+                                evaluation_root=(
+                                    self.config.evaluation_root_directory
+                                ),
+                                input_label=self.config.evaluation_input_label,
+                                run_label=self.config.evaluation_run_label,
+                                pipeline_config=self.config,
+                            )
+                            evaluation_stage.metadata["evaluation_run_path"] = str(
+                                evaluation_run_path,
+                            )
+                            self._finalize_stage_report(
+                                evaluation_stage,
+                                status="executed",
+                            )
+                        self._sync_timing_summary(session)
+                        self._log_stage_completion(evaluation_stage)
+                    else:
+                        timer.record(
+                            "evaluation_run_export",
+                            status="skipped",
+                            note="evaluation_run_export_disabled",
+                            metadata={"segmentation_mode": mode},
+                        )
+                        self._sync_timing_summary(session)
+                        LOGGER.info(
+                            "evaluation_run_export: skipped | evaluation export disabled",
+                        )
             else:
                 for mode, session in sessions_by_mode.items():
                     timer = self._resolve_timer(session)
@@ -491,6 +561,24 @@ class LectureProcessingPipeline:
                         metadata={"segmentation_mode": mode},
                     )
                     LOGGER.info("debug_excel_export: skipped | no output path requested")
+                    timer.record(
+                        "ai_review_packet_export",
+                        status="skipped",
+                        note="output_path_not_requested",
+                        metadata={"segmentation_mode": mode},
+                    )
+                    LOGGER.info(
+                        "ai_review_packet_export: skipped | no output path requested",
+                    )
+                    timer.record(
+                        "evaluation_run_export",
+                        status="skipped",
+                        note="output_path_not_requested",
+                        metadata={"segmentation_mode": mode},
+                    )
+                    LOGGER.info(
+                        "evaluation_run_export: skipped | no output path requested",
+                    )
                     self._sync_timing_summary(session)
         except Exception as error:
             failed_sessions = (
@@ -563,6 +651,21 @@ class LectureProcessingPipeline:
             target_stem = f"{configured_path.stem}_{target_stem}"
         return configured_path.with_name(f"{target_stem}.xlsx")
 
+    def _resolve_ai_review_packet_path(
+        self,
+        *,
+        exported_json_path: Path,
+    ) -> Path:
+        """Return the configured Markdown review packet path for this export mode."""
+
+        configured_path = self.config.ai_review_packet_path
+        if configured_path.suffix.lower() != ".md":
+            return (configured_path / f"{exported_json_path.stem}.review.md").resolve()
+        target_stem = exported_json_path.stem
+        if configured_path.stem:
+            target_stem = f"{configured_path.stem}_{target_stem}"
+        return configured_path.with_name(f"{target_stem}.md")
+
     def _resolve_timer(self, session: LectureSession | None = None) -> PipelineTimer:
         """Return the active timer or create a session-local one."""
 
@@ -619,6 +722,7 @@ class LectureProcessingPipeline:
             return
         session.pipeline_timing.refresh_summary()
         summary = session.pipeline_timing.summary
+        session.metadata["pipeline_profile"] = self.config.pipeline_profile
         session.metadata["pipeline_timing_available"] = True
         session.metadata["pipeline_timing_stage_count"] = summary.stage_count
         session.metadata["pipeline_timing_total_duration_seconds"] = (

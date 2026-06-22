@@ -125,6 +125,8 @@ class PipelineTimingTests(unittest.TestCase):
                 self.assertIn("qa_extraction", stage_names)
                 self.assertIn("json_export", stage_names)
                 self.assertIn("debug_excel_export", stage_names)
+                self.assertIn("ai_review_packet_export", stage_names)
+                self.assertIn("evaluation_run_export", stage_names)
                 self.assertIn("total_pipeline_execution", stage_names)
 
                 self.assertEqual(stage_by_name["alignment"]["status"], "disabled")
@@ -148,6 +150,14 @@ class PipelineTimingTests(unittest.TestCase):
                     "skipped",
                 )
                 self.assertEqual(
+                    stage_by_name["ai_review_packet_export"]["status"],
+                    "skipped",
+                )
+                self.assertEqual(
+                    stage_by_name["evaluation_run_export"]["status"],
+                    "skipped",
+                )
+                self.assertEqual(
                     stage_by_name["transcript_segmentation"]["metadata"][
                         "segmentation_mode"
                     ],
@@ -168,7 +178,7 @@ class PipelineTimingTests(unittest.TestCase):
                 self.assertGreater(summary["stage_count"], 0)
                 self.assertGreaterEqual(summary["total_duration_seconds"], 0.0)
                 self.assertEqual(summary["disabled_stage_count"], 3)
-                self.assertEqual(summary["skipped_stage_count"], 5)
+                self.assertEqual(summary["skipped_stage_count"], 7)
                 self.assertTrue(session.metadata["pipeline_timing_available"])
                 self.assertEqual(
                     session.metadata["pipeline_timing_total_duration_seconds"],

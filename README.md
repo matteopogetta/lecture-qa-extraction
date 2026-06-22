@@ -54,6 +54,9 @@ After activation, the CLI is available as:
 lecture-analyzer --help
 ```
 
+For QA/C quality and runtime evaluation, see
+[docs/quality_evaluation.md](docs/quality_evaluation.md).
+
 ## Project overview
 
 Lecture QA Extraction is a standalone Python prototype for transforming lecture
@@ -131,6 +134,24 @@ Example:
 ./.venv/bin/lecture-analyzer /path/to/input.mp4 --output /path/to/output.json --pipeline-profile light
 ```
 
+Write a local Markdown review packet for human or chatbot assessment:
+
+```bash
+./.venv/bin/lecture-analyzer /path/to/input.mp4 --output /path/to/output.json --export-ai-review-packet
+```
+
+Write a persistent local evaluation run under ignored `evaluations/`:
+
+```bash
+./.venv/bin/lecture-analyzer /path/to/input.mp4 --output /path/to/output.json --pipeline-profile light --export-evaluation-run
+```
+
+Compare saved local evaluation runs for one input:
+
+```bash
+./.venv/bin/lecture-analyzer-compare-evaluations evaluations/icwros
+```
+
 Run the full test suite:
 
 ```bash
@@ -148,6 +169,29 @@ For a professor-friendly Docker-only demo flow, see
 
 For package-facing imports, use `lecture_analyzer.*`. The legacy root package
 imports have been retired.
+
+## Optional Hugging Face Token
+
+Diarization is optional and may require a Hugging Face token for gated
+pyannote models. The pipeline checks these values in order:
+
+1. `PipelineConfig.diarization_auth_token`
+2. `HUGGINGFACE_HUB_TOKEN`
+3. `HF_TOKEN`
+
+For a single terminal session:
+
+```bash
+export HUGGINGFACE_HUB_TOKEN="hf_xxxxxxxxxxxxxxxxx"
+```
+
+Or create a local `.env` file in the project root:
+
+```env
+HUGGINGFACE_HUB_TOKEN=hf_xxxxxxxxxxxxxxxxx
+```
+
+`.env` is ignored by Git. Never commit real tokens.
 
 ## Experimental or transitional areas
 

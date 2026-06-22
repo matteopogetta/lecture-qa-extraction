@@ -38,6 +38,7 @@ PIPELINE_PROFILE_SETTINGS: dict[str, dict[str, object]] = {
         "qa_answer_ranking_strategy": "semantic_reranker",
         "qa_semantic_reranking_enabled": True,
         "export_debug_excel": True,
+        "export_ai_review_packet": True,
     },
 }
 
@@ -293,6 +294,12 @@ class PipelineConfig:
     export_indent: int = 2
     export_debug_excel: bool = True
     debug_excel_path: Path = Path("debug.xlsx")
+    export_ai_review_packet: bool = False
+    ai_review_packet_path: Path = Path("ai_review_packet.md")
+    export_evaluation_run: bool = False
+    evaluation_root_directory: Path = Path("evaluations")
+    evaluation_input_label: str | None = None
+    evaluation_run_label: str | None = None
 
     def __post_init__(self) -> None:
         """Normalize configurable paths after initialization."""
@@ -349,6 +356,18 @@ class PipelineConfig:
         self.debug_excel_path = self._resolve_output_artifact_path(
             self.debug_excel_path,
         )
+        self.ai_review_packet_path = self._resolve_output_artifact_path(
+            self.ai_review_packet_path,
+        )
+        self.evaluation_root_directory = (
+            self.evaluation_root_directory.expanduser().resolve()
+        )
+        if self.evaluation_input_label is not None:
+            normalized_evaluation_input_label = self.evaluation_input_label.strip()
+            self.evaluation_input_label = normalized_evaluation_input_label or None
+        if self.evaluation_run_label is not None:
+            normalized_evaluation_run_label = self.evaluation_run_label.strip()
+            self.evaluation_run_label = normalized_evaluation_run_label or None
         self.transcription_cache_text_extension = self._normalize_extension(
             self.transcription_cache_text_extension,
         )

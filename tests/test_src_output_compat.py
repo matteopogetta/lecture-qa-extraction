@@ -5,6 +5,10 @@ from __future__ import annotations
 import unittest
 
 from lecture_analyzer.output.debug_excel_exporter import export_run_to_excel
+from lecture_analyzer.output.evaluation_comparison_exporter import (
+    export_evaluation_comparison,
+)
+from lecture_analyzer.output.evaluation_run_exporter import export_evaluation_run
 from lecture_analyzer.output.json_exporter import JsonExporter
 from lecture_analyzer.output.sentence_provenance_validation import (
     SentenceProvenanceValidation,
@@ -25,6 +29,11 @@ class SrcOutputCompatibilityTests(unittest.TestCase):
 
         self.assertEqual(JsonExporter.__name__, "JsonExporter")
         self.assertEqual(export_run_to_excel.__name__, "export_run_to_excel")
+        self.assertEqual(export_evaluation_run.__name__, "export_evaluation_run")
+        self.assertEqual(
+            export_evaluation_comparison.__name__,
+            "export_evaluation_comparison",
+        )
 
     def test_provenance_validation_symbols_are_available(self) -> None:
         """The provenance validation helpers should resolve through src."""

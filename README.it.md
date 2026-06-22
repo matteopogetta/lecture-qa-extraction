@@ -54,6 +54,9 @@ Dopo l'attivazione, la CLI e disponibile come:
 lecture-analyzer --help
 ```
 
+Per valutare qualita QA/C e tempi di esecuzione, vedi
+`docs/quality_evaluation.md`.
+
 Questo repository contiene un prototipo Python standalone per trasformare media
 di lezione audio/video in artefatti JSON strutturati e tracciabili.
 
@@ -147,6 +150,29 @@ Note:
 - il sentence splitter preferito e `wtpsplit`; se non e disponibile la
   pipeline usa un fallback conservativo a regole
 
+### Token Hugging Face Opzionale
+
+La diarization e opzionale e puo richiedere un token Hugging Face per modelli
+pyannote gated. La pipeline controlla questi valori in ordine:
+
+1. `PipelineConfig.diarization_auth_token`
+2. `HUGGINGFACE_HUB_TOKEN`
+3. `HF_TOKEN`
+
+Per una singola sessione terminale:
+
+```bash
+export HUGGINGFACE_HUB_TOKEN="hf_xxxxxxxxxxxxxxxxx"
+```
+
+Oppure crea un file locale `.env` nella root del progetto:
+
+```env
+HUGGINGFACE_HUB_TOKEN=hf_xxxxxxxxxxxxxxxxx
+```
+
+`.env` e ignorato da Git. Non committare mai token reali.
+
 ## Avvio Rapido
 
 Run normale:
@@ -198,6 +224,25 @@ Esempio:
 ./.venv/bin/python main.py sample_inputs --output artifacts/session.json --pipeline-profile light
 ```
 
+Esporta un packet Markdown locale per revisione umana o chatbot:
+
+```bash
+./.venv/bin/python main.py sample_inputs --output artifacts/session.json --export-ai-review-packet
+```
+
+Salva una evaluation run persistente nella cartella locale ignorata
+`evaluations/`:
+
+```bash
+./.venv/bin/python main.py sample_inputs --output artifacts/session.json --pipeline-profile light --export-evaluation-run
+```
+
+Confronta le evaluation run salvate per uno stesso input:
+
+```bash
+./.venv/bin/lecture-analyzer-compare-evaluations evaluations/icwros
+```
+
 Nota:
 
 - `lecture-analyzer` e la CLI ufficiale
@@ -234,6 +279,12 @@ Opzioni principali:
 - `--min-speakers`
 - `--max-speakers`
 - `--segmentation-mode`
+- `--export-ai-review-packet`
+- `--ai-review-packet-path`
+- `--export-evaluation-run`
+- `--evaluation-root`
+- `--evaluation-input-label`
+- `--evaluation-run-label`
 
 Comportamenti importanti:
 
