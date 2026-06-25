@@ -64,9 +64,9 @@ class MainCliTests(unittest.TestCase):
 
         parser = build_parser()
 
-        args = parser.parse_args(["--pipeline-profile", "light", "lesson.mp4"])
+        args = parser.parse_args(["--pipeline-profile", "quality_local", "lesson.mp4"])
 
-        self.assertEqual(args.pipeline_profile, "light")
+        self.assertEqual(args.pipeline_profile, "quality_local")
         self.assertEqual(args.inputs, ["lesson.mp4"])
 
     def test_pipeline_profile_selects_real_pipeline(self) -> None:

@@ -215,6 +215,8 @@ Profili pipeline opt-in:
 
 - `current`: default; conserva il comportamento esistente
 - `light`: disattiva i rami opzionali piu pesanti per controlli locali rapidi
+- `quality`: abilita alignment e QA semantico senza diarizzazione
+- `quality_local`: abilita alignment e QA locale con guardrail senza diarizzazione
 - `full`: abilita i rami opzionali orientati alla massima qualita
 - `diagnostic`: abilita rami di confronto e debug
 
@@ -236,6 +238,13 @@ Salva una evaluation run persistente nella cartella locale ignorata
 ```bash
 ./.venv/bin/python main.py sample_inputs --output artifacts/session.json --pipeline-profile light --export-evaluation-run
 ```
+
+Usa `--pipeline-profile quality` per valutare QA semantico con alignment ma
+senza diarization. Usa `--pipeline-profile quality_local` per misurare QA locale
+con guardrail senza il costo di semantic retrieval/reranking. I guardrail locali
+filtrano check-in di classe poco informativi, poll numerici, domande-frammento,
+risposte che sono ancora domande, echo same-sentence e deferred answer lontane
+con segnale debole.
 
 Confronta le evaluation run salvate per uno stesso input:
 

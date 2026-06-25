@@ -43,6 +43,34 @@ class PipelineConfigProfileTests(unittest.TestCase):
         self.assertFalse(config.export_ai_review_packet)
         self.assertFalse(config.export_evaluation_run)
 
+    def test_quality_profile_keeps_semantic_qa_without_diarization(self) -> None:
+        """The quality profile should target QA quality without diarization."""
+
+        config = PipelineConfig(pipeline_profile="quality")
+
+        self.assertEqual(config.pipeline_profile, "quality")
+        self.assertTrue(config.transcript_alignment_enabled)
+        self.assertFalse(config.diarization_enabled)
+        self.assertEqual(config.qa_answer_search_strategy, "semantic_retrieval")
+        self.assertTrue(config.qa_semantic_retrieval_enabled)
+        self.assertEqual(config.qa_answer_ranking_strategy, "semantic_reranker")
+        self.assertTrue(config.qa_semantic_reranking_enabled)
+        self.assertFalse(config.export_debug_excel)
+
+    def test_quality_local_profile_keeps_alignment_without_semantic_qa(self) -> None:
+        """The quality_local profile should measure guarded local QA cost."""
+
+        config = PipelineConfig(pipeline_profile="quality_local")
+
+        self.assertEqual(config.pipeline_profile, "quality_local")
+        self.assertTrue(config.transcript_alignment_enabled)
+        self.assertFalse(config.diarization_enabled)
+        self.assertEqual(config.qa_answer_search_strategy, "local_rule_based")
+        self.assertFalse(config.qa_semantic_retrieval_enabled)
+        self.assertEqual(config.qa_answer_ranking_strategy, "rule_based")
+        self.assertFalse(config.qa_semantic_reranking_enabled)
+        self.assertFalse(config.export_debug_excel)
+
     def test_diagnostic_profile_runs_comparison_and_debug_outputs(self) -> None:
         """The diagnostic profile should enable the richer comparison surface."""
 

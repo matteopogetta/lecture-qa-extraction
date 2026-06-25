@@ -57,6 +57,42 @@ class EvaluationRunExporterTests(unittest.TestCase):
             self.assertEqual(metrics["run_identity"]["run_id"], "icwros/2026-06-21_light")
             self.assertEqual(metrics["run_identity"]["pipeline_profile"], "light")
             self.assertEqual(metrics["objective_metrics"]["qa_candidate_count"], 1)
+            self.assertEqual(metrics["qa_quality_metrics"]["candidate_count"], 1)
+            self.assertEqual(
+                metrics["qa_quality_metrics"]["available_candidate_count"],
+                1,
+            )
+            self.assertEqual(
+                metrics["qa_quality_metrics"]["final_quality_score"]["median"],
+                0.82,
+            )
+            self.assertEqual(
+                metrics["qa_quality_metrics"]["quality_band_counts"]["high"],
+                1,
+            )
+            self.assertEqual(
+                metrics["qa_quality_metrics"]["risk_band_counts"]["low"],
+                1,
+            )
+            self.assertEqual(
+                metrics["qa_quality_metrics"]["top_risk_reasons"],
+                [{"reason": "medium_confidence", "count": 1}],
+            )
+            self.assertEqual(
+                metrics["qa_quality_metrics"]["run_quality_signal"]["band"],
+                "medium",
+            )
+            self.assertEqual(
+                metrics["qa_quality_metrics"]["run_quality_signal"]["score"],
+                0.5848,
+            )
+            self.assertEqual(
+                metrics["qa_quality_metrics"]["run_quality_signal"][
+                    "useful_yield_score"
+                ],
+                0.1,
+            )
+            self.assertNotIn("candidates", metrics["qa_quality_metrics"])
             self.assertEqual(
                 metrics["runtime_metrics"]["zero_or_near_zero_reused_stages"],
                 ["transcription"],
@@ -150,6 +186,20 @@ class EvaluationRunExporterTests(unittest.TestCase):
                     question_text="What is a matrix?",
                     answer_text="A matrix is an array.",
                     context_text="Linear algebra introduction.",
+                    metadata={
+                        "quality_features": {
+                            "schema_version": "1.0",
+                            "question_quality_score": 0.86,
+                            "answer_quality_score": 0.84,
+                            "context_quality_score": 0.75,
+                            "grounding_quality_score": 0.90,
+                            "risk_score": 0.12,
+                            "final_quality_score": 0.82,
+                            "quality_band": "high",
+                            "risk_band": "low",
+                            "risk_reasons": ["medium_confidence"],
+                        },
+                    },
                 ),
             ],
             pipeline_timing=PipelineTiming(

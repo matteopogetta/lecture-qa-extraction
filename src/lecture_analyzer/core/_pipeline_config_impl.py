@@ -7,12 +7,37 @@ from pathlib import Path
 
 
 SUPPORTED_NORMALIZED_AUDIO_FORMATS = {"wav", "flac"}
-SUPPORTED_PIPELINE_PROFILES = {"current", "light", "full", "diagnostic"}
+SUPPORTED_PIPELINE_PROFILES = {
+    "current",
+    "light",
+    "quality",
+    "quality_local",
+    "full",
+    "diagnostic",
+}
 
 PIPELINE_PROFILE_SETTINGS: dict[str, dict[str, object]] = {
     "current": {},
     "light": {
         "transcript_alignment_enabled": False,
+        "diarization_enabled": False,
+        "qa_answer_search_strategy": "local_rule_based",
+        "qa_semantic_retrieval_enabled": False,
+        "qa_answer_ranking_strategy": "rule_based",
+        "qa_semantic_reranking_enabled": False,
+        "export_debug_excel": False,
+    },
+    "quality": {
+        "transcript_alignment_enabled": True,
+        "diarization_enabled": False,
+        "qa_answer_search_strategy": "semantic_retrieval",
+        "qa_semantic_retrieval_enabled": True,
+        "qa_answer_ranking_strategy": "semantic_reranker",
+        "qa_semantic_reranking_enabled": True,
+        "export_debug_excel": False,
+    },
+    "quality_local": {
+        "transcript_alignment_enabled": True,
         "diarization_enabled": False,
         "qa_answer_search_strategy": "local_rule_based",
         "qa_semantic_retrieval_enabled": False,

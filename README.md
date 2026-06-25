@@ -125,6 +125,8 @@ Pipeline profiles are opt-in presets for optional branches:
 
 - `current`: default; preserves the existing behavior
 - `light`: disables heavier optional branches for fast local checks
+- `quality`: enables alignment plus semantic QA without diarization
+- `quality_local`: enables alignment plus guarded local QA without diarization
 - `full`: enables the heavier quality-oriented optional branches
 - `diagnostic`: enables comparison/debug-oriented branches
 
@@ -145,6 +147,12 @@ Write a persistent local evaluation run under ignored `evaluations/`:
 ```bash
 ./.venv/bin/lecture-analyzer /path/to/input.mp4 --output /path/to/output.json --pipeline-profile light --export-evaluation-run
 ```
+
+Use `--pipeline-profile quality` to evaluate semantic QA with alignment but
+without diarization. Use `--pipeline-profile quality_local` to measure guarded
+local QA without semantic retrieval/reranking cost. The local QA guardrails
+filter low-information classroom check-ins, numeric polls, fragment questions,
+question-like answers, same-sentence echoes, and weak distant deferred answers.
 
 Compare saved local evaluation runs for one input:
 

@@ -110,7 +110,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--pipeline-profile",
         default="current",
-        choices=("current", "light", "full", "diagnostic"),
+        choices=("current", "light", "quality", "quality_local", "full", "diagnostic"),
         help=(
             "Execution profile for optional pipeline branches. The default "
             "'current' preserves the existing behavior."

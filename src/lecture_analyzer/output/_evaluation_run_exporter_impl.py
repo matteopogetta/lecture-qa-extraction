@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, is_dataclass
 from datetime import datetime, timezone
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -175,6 +176,7 @@ def build_evaluation_metrics(
             "segment_count": len(payload.get("segments") or []),
             "sentence_count": len(payload.get("sentences") or []),
         },
+        "qa_quality_metrics": _qa_quality_metrics(qa_candidates),
         "timing_summary": timing_summary,
         "runtime_metrics": {
             "total_duration_seconds": total_duration_seconds,
@@ -301,6 +303,174 @@ def _zeroish_reused_stages(stages: list[dict[str, Any]]) -> list[str]:
     ]
 
 
+def _qa_quality_metrics(qa_candidates: list[dict[str, Any]]) -> dict[str, Any]:
+    """Return run-level aggregates from compact candidate quality features."""
+
+    quality_features = [
+        features
+        for candidate in qa_candidates
+        for features in [
+            _as_dict(_as_dict(candidate.get("metadata")).get("quality_features")),
+        ]
+        if features
+    ]
+    final_scores = [
+        score
+        for score in (
+            _safe_float(features.get("final_quality_score"))
+            for features in quality_features
+        )
+        if score is not None
+    ]
+    risk_scores = [
+        score
+        for score in (
+            _safe_float(features.get("risk_score"))
+            for features in quality_features
+        )
+        if score is not None
+    ]
+    quality_band_counts = _count_string_values(
+        features.get("quality_band") for features in quality_features
+    )
+    risk_band_counts = _count_string_values(
+        features.get("risk_band") for features in quality_features
+    )
+    final_score_distribution = _score_distribution(final_scores)
+    risk_score_distribution = _score_distribution(risk_scores)
+    risk_reason_counts: dict[str, int] = {}
+    for features in quality_features:
+        for reason in features.get("risk_reasons") or []:
+            if not isinstance(reason, str) or not reason:
+                continue
+            risk_reason_counts[reason] = risk_reason_counts.get(reason, 0) + 1
+
+    return {
+        "schema_version": "1.0",
+        "candidate_count": len(qa_candidates),
+        "available_candidate_count": len(quality_features),
+        "missing_candidate_count": max(0, len(qa_candidates) - len(quality_features)),
+        "final_quality_score": final_score_distribution,
+        "risk_score": risk_score_distribution,
+        "quality_band_counts": {
+            "high": quality_band_counts.get("high", 0),
+            "medium": quality_band_counts.get("medium", 0),
+            "low": quality_band_counts.get("low", 0),
+        },
+        "risk_band_counts": {
+            "low": risk_band_counts.get("low", 0),
+            "medium": risk_band_counts.get("medium", 0),
+            "high": risk_band_counts.get("high", 0),
+        },
+        "top_risk_reasons": [
+            {"reason": reason, "count": count}
+            for reason, count in sorted(
+                risk_reason_counts.items(),
+                key=lambda item: (-item[1], item[0]),
+            )[:10]
+        ],
+        "run_quality_signal": _run_quality_signal(
+            available_candidate_count=len(quality_features),
+            final_quality_score=final_score_distribution,
+            risk_score=risk_score_distribution,
+            quality_band_counts=quality_band_counts,
+            risk_band_counts=risk_band_counts,
+        ),
+    }
+
+
+def _run_quality_signal(
+    *,
+    available_candidate_count: int,
+    final_quality_score: dict[str, float | int | None],
+    risk_score: dict[str, float | int | None],
+    quality_band_counts: dict[str, int],
+    risk_band_counts: dict[str, int],
+) -> dict[str, Any]:
+    """Return a compact run-level quality signal from aggregate QA metrics."""
+
+    if available_candidate_count <= 0:
+        return {
+            "schema_version": "1.0",
+            "score": None,
+            "band": "unknown",
+            "quality_distribution_score": None,
+            "useful_yield_score": None,
+            "risk_adjustment_score": None,
+        }
+
+    median_quality = _safe_float(final_quality_score.get("median"), 0.0) or 0.0
+    avg_risk = _safe_float(risk_score.get("avg"), 0.0) or 0.0
+    high_count = int(quality_band_counts.get("high") or 0)
+    medium_count = int(quality_band_counts.get("medium") or 0)
+    high_risk_count = int(risk_band_counts.get("high") or 0)
+
+    useful_yield_score = min(1.0, (high_count + (0.4 * medium_count)) / 10.0)
+    high_risk_ratio = high_risk_count / max(1, available_candidate_count)
+    risk_adjustment_score = max(0.0, 1.0 - (0.8 * avg_risk) - (0.2 * high_risk_ratio))
+    score = (
+        (0.45 * median_quality)
+        + (0.35 * useful_yield_score)
+        + (0.20 * risk_adjustment_score)
+    )
+
+    return {
+        "schema_version": "1.0",
+        "score": round(score, 4),
+        "band": _run_quality_band(score),
+        "quality_distribution_score": round(median_quality, 4),
+        "useful_yield_score": round(useful_yield_score, 4),
+        "risk_adjustment_score": round(risk_adjustment_score, 4),
+    }
+
+
+def _run_quality_band(score: float) -> str:
+    """Return a compact band for run-level QA quality signal."""
+
+    if score >= 0.72:
+        return "high"
+    if score >= 0.50:
+        return "medium"
+    return "low"
+
+
+def _score_distribution(scores: list[float]) -> dict[str, float | int | None]:
+    """Return compact descriptive statistics for normalized scores."""
+
+    if not scores:
+        return {
+            "count": 0,
+            "min": None,
+            "avg": None,
+            "median": None,
+            "max": None,
+        }
+    sorted_scores = sorted(scores)
+    midpoint = len(sorted_scores) // 2
+    if len(sorted_scores) % 2:
+        median = sorted_scores[midpoint]
+    else:
+        median = (sorted_scores[midpoint - 1] + sorted_scores[midpoint]) / 2
+    return {
+        "count": len(sorted_scores),
+        "min": round(sorted_scores[0], 4),
+        "avg": round(sum(sorted_scores) / len(sorted_scores), 4),
+        "median": round(median, 4),
+        "max": round(sorted_scores[-1], 4),
+    }
+
+
+def _count_string_values(values: object) -> dict[str, int]:
+    """Return counts for non-empty string values."""
+
+    counts: dict[str, int] = {}
+    for value in values:
+        if not isinstance(value, str) or not value:
+            continue
+        counts[value] = counts.get(value, 0) + 1
+    return counts
+
+
 def _build_code_snapshot(code_root: str | Path | None) -> dict[str, Any]:
     """Return Git/code identity fields for later run archaeology."""
 
@@ -313,6 +483,7 @@ def _build_code_snapshot(code_root: str | Path | None) -> dict[str, Any]:
         "git_branch": None,
         "git_dirty": None,
         "git_status_short": None,
+        "git_worktree_hash": None,
     }
     full_commit = _run_git(root, "rev-parse", "HEAD")
     if full_commit is None:
@@ -327,6 +498,7 @@ def _build_code_snapshot(code_root: str | Path | None) -> dict[str, Any]:
             "git_branch": _run_git(root, "branch", "--show-current"),
             "git_dirty": bool(status_short.strip()),
             "git_status_short": status_short,
+            "git_worktree_hash": _build_git_worktree_hash(root, status_short),
         },
     )
     return snapshot
@@ -347,6 +519,31 @@ def _run_git(root: Path, *args: str) -> str | None:
     except (OSError, subprocess.SubprocessError):
         return None
     return completed.stdout.strip()
+
+
+def _build_git_worktree_hash(root: Path, status_short: str) -> str | None:
+    """Return a content hash for dirty tracked and untracked Git changes."""
+
+    if _run_git(root, "rev-parse", "--is-inside-work-tree") != "true":
+        return None
+    digest = hashlib.sha256()
+    digest.update(status_short.encode("utf-8", errors="replace"))
+    tracked_diff = _run_git(root, "diff", "--binary", "HEAD", "--") or ""
+    digest.update(b"\0tracked-diff\0")
+    digest.update(tracked_diff.encode("utf-8", errors="replace"))
+    untracked_files = _run_git(root, "ls-files", "--others", "--exclude-standard") or ""
+    digest.update(b"\0untracked-files\0")
+    for relative_path in sorted(
+        item.strip() for item in untracked_files.splitlines() if item.strip()
+    ):
+        digest.update(relative_path.encode("utf-8", errors="replace"))
+        path = root / relative_path
+        try:
+            if path.is_file():
+                digest.update(path.read_bytes())
+        except OSError:
+            digest.update(b"<unreadable>")
+    return digest.hexdigest()
 
 
 def _serialize_config(config: object | None) -> dict[str, Any]:

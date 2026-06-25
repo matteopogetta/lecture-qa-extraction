@@ -45,6 +45,7 @@ _QUESTION_STOPWORDS = {
     "an",
     "and",
     "are",
+    "as",
     "at",
     "be",
     "but",
@@ -74,14 +75,22 @@ _QUESTION_STOPWORDS = {
     "le",
     "many",
     "must",
+    "my",
     "number",
+    "not",
     "of",
     "on",
     "or",
     "point",
     "right",
+    "se",
+    "si",
+    "so",
+    "that",
     "the",
+    "their",
     "there",
+    "they",
     "this",
     "to",
     "un",
@@ -92,6 +101,7 @@ _QUESTION_STOPWORDS = {
     "where",
     "which",
     "who",
+    "with",
     "why",
     "you",
 }
@@ -104,6 +114,144 @@ _ANAPHORIC_QUESTION_PATTERNS = (
     re.compile(r"^what about that\??$"),
     re.compile(r"^it must\b.*right\??$"),
 )
+_DISCOURSE_TAG_QUESTIONS = {
+    "ok",
+    "okay",
+    "right",
+    "vero",
+}
+_RHETORICAL_POLL_QUESTION_RE = re.compile(
+    r"^(?:"
+    r"\d+(?:\s+(?:or|o)\s+\d+)+"
+    r"|(?:one|two|three|four|five|uno|due|tre|quattro|cinque)"
+    r"(?:\s+(?:or|o)\s+"
+    r"(?:one|two|three|four|five|uno|due|tre|quattro|cinque))+"
+    r")\??$",
+)
+_TAG_QUESTION_RE = re.compile(
+    r"^(?:right|vero|correct|ok|okay|yes|no|eh|no)\??$",
+)
+_SUBORDINATE_QUESTION_START_WORDS = {
+    "quando",
+    "when",
+}
+_EXPLANATORY_CLAUSE_START_RE = re.compile(
+    r"^(?:because|perche)\s+(?:if|se|when|quando)\b",
+)
+_AUXILIARY_QUESTION_START_WORDS = {
+    "am",
+    "are",
+    "can",
+    "could",
+    "did",
+    "do",
+    "does",
+    "had",
+    "has",
+    "have",
+    "is",
+    "must",
+    "should",
+    "was",
+    "were",
+    "will",
+    "would",
+}
+_WEAK_DEFERRED_KEYWORDS = {
+    "answer",
+    "ask",
+    "question",
+    "questions",
+    "thing",
+    "things",
+    "think",
+    "towards",
+    "want",
+}
+_MODERATOR_HANDOFF_PATTERNS = (
+    re.compile(r"^(?:or\s+)?(?:professor|dr|doctor)\b"),
+    re.compile(r"^(?:or\s+)?[a-z]{2,24}\s+(?:is|was|also)\s+(?:engaged|joining|here)\b"),
+    re.compile(r"\b(?:let'?s|we(?:'| a)?re going to)\s+(?:move|turn|go)\b"),
+    re.compile(r"\bnext\s+question\b"),
+)
+_ANSWER_BOILERPLATE_PATTERNS = (
+    re.compile(r"^(?:yeah|yes|no|okay|ok|well|so|right)[\s,.-]*$"),
+    re.compile(r"^(?:let me|i want to|we are going to|we're going to)\b"),
+    re.compile(r"^(?:i had a thought|i have a thought)\b"),
+    re.compile(r"\bedging towards an answer\b"),
+    re.compile(r"\b(?:answer|response)\s+(?:is|will be|comes)\s+in\s+(?:the\s+)?next\b"),
+    re.compile(r"\b(?:come|get|go)\s+back\s+to\s+(?:that|this|it)\s+later\b"),
+    re.compile(r"\b(?:course split|lecture outline|today we will)\b"),
+    re.compile(r"\b(?:next|following)\s+(?:slide|section|part|topic)\b"),
+    re.compile(r"\b(?:move|moving|turn|turning)\s+(?:on|to)\b"),
+    re.compile(r"^(?:thanks|thank you)\s+(?:for\s+)?(?:that|the)?\s*question\b"),
+)
+_META_ANSWER_OPENING_RE = re.compile(
+    r"^(?:(?:yeah|yes|right|okay|ok|well|so)[\s,.-]+)*"
+    r"(?:"
+    r"(?:that(?:'s|\s+is)\s+(?:a\s+)?(?:good|great|excellent|interesting|deep)\s+question)"
+    r"|(?:thanks|thank\s+you)\s+(?:for\s+)?(?:that|the)?\s*question"
+    r")"
+    r"[\s,.:;!-]+(?P<rest>.+)$",
+    flags=re.IGNORECASE,
+)
+_INCOMPLETE_ANSWER_END_WORDS = {
+    "because",
+    "but",
+    "che",
+    "di",
+    "if",
+    "of",
+    "per",
+    "perche",
+    "se",
+    "that",
+    "to",
+    "when",
+    "which",
+}
+_INCOMPLETE_ANSWER_START_RE = re.compile(
+    r"^(?:not\s+only|non\s+soltanto|if|se|when|quando)\b",
+)
+_BACKCHANNEL_CHECK_RE = re.compile(
+    r"\b(?:"
+    r"ci\s+siamo|mi\s+state\s+(?:vedendo|sentendo)|"
+    r"are\s+(?:we|you)\s+(?:ready|good|clear)|"
+    r"can\s+you\s+(?:see|hear|follow)"
+    r")\b",
+)
+_PROCEDURAL_QUESTION_RE = re.compile(
+    r"\b(?:"
+    r"ask\s+(?:[a-z]+\s+){0,4}(?:a\s+)?question|"
+    r"(?:one|1)\s+more\s+(?:audience\s+)?question"
+    r")\b",
+)
+_POLL_OPTION_WORDS = {
+    "0",
+    "1",
+    "2",
+    "3",
+    "4",
+    "5",
+    "one",
+    "two",
+    "three",
+    "four",
+    "five",
+    "uno",
+    "due",
+    "tre",
+    "quattro",
+    "cinque",
+}
+_FILLER_ANSWERS = {
+    "another aside entirely",
+    "because i can feel one coming",
+    "in general",
+    "let us move on for a moment",
+    "let us pause",
+    "well",
+}
 
 
 @dataclass(slots=True)
@@ -1020,7 +1168,9 @@ class QAPairExtractor:
             )
             if not ranked_answers:
                 continue
-            answer = ranked_answers[0]
+            answer = self._select_ranked_answer(ranked_answers)
+            if answer is None:
+                continue
 
             qa_candidate = self._build_qa_candidate(
                 ordinal=ordinal,
@@ -1032,10 +1182,197 @@ class QAPairExtractor:
                 utterance_by_id=prepared_input.utterance_by_id,
                 segment_lookup=segment_lookup,
             )
-            if qa_candidate.confidence >= self.config.min_qa_confidence:
+            if (
+                qa_candidate.confidence >= self.config.min_qa_confidence
+                and self._should_emit_qa_candidate(qa_candidate)
+            ):
                 qa_candidates.append(qa_candidate)
 
-        return qa_candidates
+        return self._dedupe_qa_candidates(qa_candidates)
+
+    def _should_emit_qa_candidate(self, candidate: QAPairCandidate) -> bool:
+        """Return whether a built candidate should be exported."""
+
+        if self.config.pipeline_profile != "quality_local":
+            return True
+
+        reason_codes = set(candidate.reason_codes)
+        answer_debug = candidate.metadata.get("answer_debug", {})
+        question_debug = candidate.metadata.get("question_debug", {})
+        partial_scores = answer_debug.get("partial_scores", {})
+
+        weak_question_reasons = {
+            "rhetorical_checkin_question",
+            "rhetorical_poll_question",
+            "declarative_tag_question",
+            "fragment_question",
+            "question_intent_subordinate_fragment",
+            "procedural_question_request",
+        }
+        if reason_codes & weak_question_reasons:
+            return False
+
+        weak_pair_reasons = {
+            "same_sentence_without_answer_cue",
+            "answer_boilerplate_penalty",
+            "moderator_handoff_answer_penalty",
+            "low_information_answer_penalty",
+        }
+        if reason_codes & weak_pair_reasons and candidate.confidence < 0.72:
+            return False
+
+        if (
+            question_debug.get("question_intent")
+            in {"embedded_statement_question", "weak_question_form"}
+            and reason_codes & {
+                "low_question_answer_relevance",
+                "same_sentence_without_answer_cue",
+                "answer_boilerplate_penalty",
+            }
+        ):
+            return False
+
+        if "quality_local_deferred_penalty" in reason_codes:
+            gap_seconds = self._safe_float(answer_debug.get("gap_seconds")) or 0.0
+            distance_units = int(answer_debug.get("answer_distance_units") or 0)
+            answer_token_count = int(answer_debug.get("token_count") or 0)
+            quality_gate = float(partial_scores.get("quality_gate") or 0.0)
+            if (
+                gap_seconds > 45.0
+                or distance_units > 10
+                or answer_token_count > 45
+                or quality_gate < 0.0
+            ):
+                return False
+
+        quality_features = candidate.metadata.get("quality_features", {})
+        final_quality_score = self._safe_float(
+            quality_features.get("final_quality_score"),
+        )
+        risk_score = self._safe_float(quality_features.get("risk_score"))
+        risk_reasons = set(quality_features.get("risk_reasons") or [])
+        risk_band = str(quality_features.get("risk_band") or "")
+        quality_band = str(quality_features.get("quality_band") or "")
+        if final_quality_score is not None and risk_score is not None:
+            if risk_band == "high" and final_quality_score < 0.58:
+                return False
+            if quality_band == "low" and risk_score >= 0.25:
+                return False
+            if {
+                "implicit_question_risk",
+                "surface_answer_cue_risk",
+            }.issubset(risk_reasons) and candidate.confidence < 0.78:
+                return False
+            if "poll_or_backchannel_noise" in risk_reasons and risk_score >= 0.30:
+                return False
+            if "surface_answer_cue_risk" in risk_reasons and final_quality_score < 0.62:
+                return False
+            if "incomplete_answer_span" in risk_reasons and final_quality_score < 0.65:
+                return False
+
+        return True
+
+    def _select_ranked_answer(
+        self,
+        ranked_answers: Sequence[_AnswerCandidate],
+    ) -> _AnswerCandidate | None:
+        """Return the best ranked answer that is not itself a question."""
+
+        if not ranked_answers:
+            return None
+        for answer in ranked_answers:
+            if not bool(answer.metadata.get("answer_is_question")):
+                return answer
+        return None
+
+    def _dedupe_qa_candidates(
+        self,
+        candidates: Sequence[QAPairCandidate],
+    ) -> list[QAPairCandidate]:
+        """Remove near-duplicate QA pairs while preserving order."""
+
+        kept: list[QAPairCandidate] = []
+        for candidate in candidates:
+            duplicate_index = self._find_near_duplicate_candidate(candidate, kept)
+            if duplicate_index is None:
+                kept.append(candidate)
+                continue
+
+            existing = kept[duplicate_index]
+            if self._candidate_quality_sort_key(candidate) > (
+                self._candidate_quality_sort_key(existing)
+            ):
+                candidate.reason_codes = self._unique_strings(
+                    list(candidate.reason_codes) + ["deduplicated_replacement"],
+                )
+                candidate.review_flags = self._unique_strings(
+                    list(candidate.review_flags) + ["deduplicated_near_duplicate"],
+                )
+                kept[duplicate_index] = candidate
+            else:
+                existing.reason_codes = self._unique_strings(
+                    list(existing.reason_codes) + ["deduplicated_near_duplicate"],
+                )
+                existing.review_flags = self._unique_strings(
+                    list(existing.review_flags) + ["deduplicated_near_duplicate"],
+                )
+        return kept
+
+    def _find_near_duplicate_candidate(
+        self,
+        candidate: QAPairCandidate,
+        existing_candidates: Sequence[QAPairCandidate],
+    ) -> int | None:
+        """Return the index of a nearby near-duplicate candidate, if any."""
+
+        for index in range(len(existing_candidates) - 1, -1, -1):
+            existing = existing_candidates[index]
+            if not self._candidate_times_are_close(candidate, existing):
+                continue
+            question_overlap = self._token_overlap_ratio(
+                candidate.question_text,
+                existing.question_text,
+            )
+            answer_overlap = self._token_overlap_ratio(
+                candidate.answer_text or "",
+                existing.answer_text or "",
+            )
+            if question_overlap >= 0.72 and answer_overlap >= 0.50:
+                return index
+            if question_overlap >= 0.86 and answer_overlap >= 0.35:
+                return index
+        return None
+
+    @staticmethod
+    def _candidate_quality_sort_key(candidate: QAPairCandidate) -> tuple[float, int, int]:
+        """Return a stable preference key for near-duplicate candidates."""
+
+        review_penalty = len(candidate.review_flags)
+        answer_length = count_tokens(normalize_rule_text(candidate.answer_text or ""))
+        return (float(candidate.confidence), -review_penalty, answer_length)
+
+    @staticmethod
+    def _candidate_times_are_close(
+        candidate: QAPairCandidate,
+        existing: QAPairCandidate,
+    ) -> bool:
+        """Return whether two candidates are close enough to compare."""
+
+        if candidate.start_seconds is None or existing.start_seconds is None:
+            return True
+        return abs(float(candidate.start_seconds) - float(existing.start_seconds)) <= 90.0
+
+    def _token_overlap_ratio(self, left_text: str, right_text: str) -> float:
+        """Return symmetric content-token overlap for two text spans."""
+
+        left_tokens = self._content_tokens(left_text)
+        right_tokens = self._content_tokens(right_text)
+        if not left_tokens or not right_tokens:
+            return 0.0
+        return len(left_tokens & right_tokens) / max(
+            1,
+            min(len(left_tokens), len(right_tokens)),
+        )
 
     def _prepare_input(self, session: LectureSession) -> _PreparedExtractionInput:
         """Resolve the primary QA input layer plus grounding lookups."""
@@ -1230,6 +1567,10 @@ class QAPairExtractor:
                         "matched_didactic_cues": question_evaluation[
                             "matched_didactic_cues"
                         ],
+                        "question_intent": question_evaluation["question_intent"],
+                        "question_intent_debug": question_evaluation[
+                            "question_intent_debug"
+                        ],
                         "normalized_question_text": question_evaluation[
                             "normalized_question_text"
                         ],
@@ -1357,6 +1698,68 @@ class QAPairExtractor:
         token_count = count_tokens(normalized_text)
         reason_codes: list[str] = []
         question_score = 0.0
+        is_rhetorical_checkin = self._is_rhetorical_checkin_question(normalized_text)
+        is_poll_question = self._is_rhetorical_poll_question(normalized_text)
+        is_fragment_question = self._is_fragment_question(
+            normalized_text=normalized_text,
+            has_question_mark=has_question_mark,
+            question_matches=question_matches,
+            didactic_matches=didactic_matches,
+        )
+        is_declarative_tag_question = self._is_declarative_tag_question(
+            normalized_text=normalized_text,
+            has_question_mark=has_question_mark,
+            question_matches=question_matches,
+            didactic_matches=didactic_matches,
+        )
+        intent_evaluation = self._classify_question_intent(
+            normalized_text=normalized_text,
+            has_question_mark=has_question_mark,
+            question_matches=question_matches,
+            didactic_matches=didactic_matches,
+            token_count=token_count,
+            is_poll_question=is_poll_question,
+            is_declarative_tag_question=is_declarative_tag_question,
+            is_fragment_question=is_fragment_question,
+            is_rhetorical_checkin=is_rhetorical_checkin,
+        )
+        question_intent = str(intent_evaluation["question_intent"])
+
+        if is_rhetorical_checkin:
+            question_score -= 0.28
+            reason_codes.append("rhetorical_checkin_question")
+
+        if is_poll_question:
+            question_score -= 0.42
+            reason_codes.append("rhetorical_poll_question")
+
+        if self._has_poll_or_backchannel_noise(normalized_text):
+            question_score -= 0.20
+            reason_codes.append("poll_or_backchannel_noise")
+
+        if self._is_procedural_question_request(normalized_text):
+            question_score -= 0.26
+            reason_codes.append("procedural_question_request")
+
+        if is_declarative_tag_question:
+            question_score -= 0.30
+            reason_codes.append("declarative_tag_question")
+
+        if is_fragment_question:
+            question_score -= 0.22
+            reason_codes.append("fragment_question")
+
+        intent_penalty = float(intent_evaluation["score_delta"])
+        if intent_penalty:
+            question_score += intent_penalty
+        reason_codes.extend(intent_evaluation["reason_codes"])
+
+        if (
+            not has_question_mark
+            and not self._starts_with_interrogative_word(normalized_text)
+        ):
+            question_score -= 0.18
+            reason_codes.append("implicit_declarative_question_penalty")
 
         if has_question_mark:
             question_score += 0.40
@@ -1400,11 +1803,13 @@ class QAPairExtractor:
         return {
             "question_score": self._clamp(question_score),
             "question_type": question_type,
+            "question_intent": question_intent,
             "reason_codes": self._unique_strings(reason_codes),
             "matched_question_cues": [match.reason_code for match in question_matches],
             "matched_didactic_cues": [match.reason_code for match in didactic_matches],
             "normalized_question_text": normalized_text,
             "token_count": token_count,
+            "question_intent_debug": intent_evaluation["debug"],
         }
 
     def _expand_question_context(
@@ -1505,6 +1910,28 @@ class QAPairExtractor:
             usefulness_score += 0.06
         if intra_sentence_qa:
             usefulness_score += 0.04
+
+        reason_codes = set(question_evaluation.get("reason_codes") or [])
+        if "rhetorical_checkin_question" in reason_codes:
+            usefulness_score -= 0.28
+        if "rhetorical_poll_question" in reason_codes:
+            usefulness_score -= 0.42
+        if "declarative_tag_question" in reason_codes:
+            usefulness_score -= 0.30
+        if "fragment_question" in reason_codes:
+            usefulness_score -= 0.18
+        if "implicit_declarative_question_penalty" in reason_codes:
+            usefulness_score -= 0.18
+        if "question_intent_poll_or_check" in reason_codes:
+            usefulness_score -= 0.18
+        if "question_intent_rhetorical_tag" in reason_codes:
+            usefulness_score -= 0.18
+        if "question_intent_fragment" in reason_codes:
+            usefulness_score -= 0.16
+        if "question_intent_embedded_statement" in reason_codes:
+            usefulness_score -= 0.10
+        if "question_intent_weak_form" in reason_codes:
+            usefulness_score -= 0.08
 
         question_type = str(question_evaluation.get("question_type") or "")
         if question_type in {"why", "how", "where", "difference", "didactic_prompt"}:
@@ -1609,6 +2036,9 @@ class QAPairExtractor:
         answer_text = question.local_answer_seed.strip()
         if not self._is_plausible_answer_text(answer_text):
             return None
+        answer_text, trim_reason = self._trim_answer_meta_opening(answer_text)
+        if not self._is_plausible_answer_text(answer_text):
+            return None
 
         answer_segment_ids = self._resolve_segment_ids_for_unit(
             unit=question.unit,
@@ -1631,7 +2061,10 @@ class QAPairExtractor:
                 "distance_units": 0,
                 "candidate_span_unit_count": 1,
             },
-            reason_codes=[self._same_unit_reason(question.unit.layer)],
+            reason_codes=self._unique_strings(
+                [self._same_unit_reason(question.unit.layer)]
+                + ([trim_reason] if trim_reason else []),
+            ),
             metadata={
                 "answer_source": "same_text_unit_seed",
                 "search_debug": {
@@ -1652,6 +2085,9 @@ class QAPairExtractor:
         """Return an unscored answer candidate from consecutive units."""
 
         answer_text = self._join_text(unit.text for unit in answer_units)
+        if not self._is_plausible_answer_text(answer_text):
+            return None
+        answer_text, trim_reason = self._trim_answer_meta_opening(answer_text)
         if not self._is_plausible_answer_text(answer_text):
             return None
 
@@ -1688,7 +2124,7 @@ class QAPairExtractor:
                 "distance_units": distance_units,
                 "candidate_span_unit_count": len(answer_units),
             },
-            reason_codes=[],
+            reason_codes=[trim_reason] if trim_reason else [],
             metadata={
                 "answer_source": "following_text_units",
                 "search_debug": {
@@ -1715,6 +2151,9 @@ class QAPairExtractor:
 
         answer_prefix = self._extract_leading_answer_before_question(competing_unit.text)
         if not answer_prefix or not self._is_plausible_answer_text(answer_prefix):
+            return None
+        answer_prefix, trim_reason = self._trim_answer_meta_opening(answer_prefix)
+        if not self._is_plausible_answer_text(answer_prefix):
             return None
 
         answer_segment_ids = self._resolve_segment_ids_for_unit(
@@ -1744,7 +2183,10 @@ class QAPairExtractor:
                 "distance_units": distance_units,
                 "candidate_span_unit_count": 1,
             },
-            reason_codes=["answer_before_competing_question"],
+            reason_codes=self._unique_strings(
+                ["answer_before_competing_question"]
+                + ([trim_reason] if trim_reason else []),
+            ),
             metadata={
                 "answer_source": "competing_question_prefix",
                 "search_debug": {
@@ -1805,6 +2247,16 @@ class QAPairExtractor:
         score += qa_alignment["relevance_score"]
         reason_codes.extend(qa_alignment["reason_codes"])
 
+        span_support = self._score_answer_span_completeness(
+            question=question,
+            answer=answer,
+            full_alignment=qa_alignment,
+            full_answer_matches=answer_matches,
+        )
+        partial_scores["span_completeness"] = float(span_support["score_delta"])
+        score += span_support["score_delta"]
+        reason_codes.extend(span_support["reason_codes"])
+
         if 3 <= token_count <= 80:
             partial_scores["length"] = 0.08
             score += 0.08
@@ -1831,6 +2283,21 @@ class QAPairExtractor:
                 score -= 0.08
                 reason_codes.append("long_temporal_gap")
 
+        if (
+            self.config.pipeline_profile == "quality_local"
+            and answer.search_signals.get("candidate_channel") == "deferred_answer_search"
+        ):
+            deferred_penalty = -0.10
+            if answer.gap_seconds > 60.0 or answer.distance_units > 12:
+                deferred_penalty = -0.24
+            elif answer.gap_seconds > 30.0 or answer.distance_units > 8:
+                deferred_penalty = -0.16
+            partial_scores["quality_local_deferred_penalty"] = deferred_penalty
+            score += deferred_penalty
+            reason_codes.append("quality_local_deferred_penalty")
+        else:
+            partial_scores["quality_local_deferred_penalty"] = 0.0
+
         if segment_relation == "same_segment":
             partial_scores["segment_relation"] = 0.10
             score += 0.10
@@ -1855,8 +2322,8 @@ class QAPairExtractor:
 
         answer_is_question = self._is_answer_question_like(answer.answer_text)
         if answer_is_question:
-            partial_scores["answer_is_question_penalty"] = -0.16
-            score -= 0.16
+            partial_scores["answer_is_question_penalty"] = -0.35
+            score -= 0.35
             reason_codes.append("answer_is_question")
         else:
             partial_scores["answer_is_question_penalty"] = 0.0
@@ -1865,6 +2332,11 @@ class QAPairExtractor:
         partial_scores["answer_context"] = float(answer_context["score_delta"])
         score += answer_context["score_delta"]
         reason_codes.extend(answer_context["reason_codes"])
+
+        quality_gate = self._score_answer_quality_gate(question, answer)
+        partial_scores["quality_gate"] = float(quality_gate["score_delta"])
+        score += quality_gate["score_delta"]
+        reason_codes.extend(quality_gate["reason_codes"])
 
         speaker_support = self._score_speaker_pairing(question, answer)
         partial_scores["speaker_pairing"] = float(speaker_support["score_delta"])
@@ -1892,7 +2364,9 @@ class QAPairExtractor:
         answer.metadata["segment_relation"] = segment_relation
         answer.metadata["answer_is_question"] = answer_is_question
         answer.metadata["qa_alignment_debug"] = qa_alignment["debug"]
+        answer.metadata["answer_span_completeness_debug"] = span_support["debug"]
         answer.metadata["answer_context_debug"] = answer_context["debug"]
+        answer.metadata["answer_quality_gate_debug"] = quality_gate["debug"]
         answer.metadata["speaker_pairing_debug"] = speaker_support["debug"]
         answer.metadata["search_stop_reason"] = search_result.stop_reason
         answer.metadata["competing_question_stop"] = (
@@ -1982,6 +2456,176 @@ class QAPairExtractor:
                 "semantic_labels": sorted(semantic_labels),
                 "merge_safety_labels": sorted(merge_labels),
                 "review_priorities": sorted(review_priorities),
+                "score_delta": round(score_delta, 4),
+            },
+        }
+
+    def _score_answer_quality_gate(
+        self,
+        question: QuestionCandidate,
+        answer: _AnswerCandidate,
+    ) -> dict[str, Any]:
+        """Return penalties for answer spans that look review-hostile."""
+
+        score_delta = 0.0
+        reason_codes: list[str] = []
+        normalized_answer = normalize_rule_text(answer.answer_text)
+        normalized_question = normalize_rule_text(question.question_text)
+
+        if self._is_moderator_handoff_answer(normalized_answer):
+            score_delta -= 0.22
+            reason_codes.append("moderator_handoff_answer_penalty")
+
+        if self._is_filler_or_boilerplate_answer(normalized_answer):
+            score_delta -= 0.26
+            reason_codes.append("answer_boilerplate_penalty")
+
+        if answer.distance_units == 0 and answer.answer_sentence_ids and set(
+            answer.answer_sentence_ids,
+        ).intersection(question.question_sentence_ids):
+            score_delta -= 0.16
+            reason_codes.append("same_sentence_answer_penalty")
+            answer_matches = collect_rule_matches(normalized_answer, ANSWER_CUE_RULES)
+            if not answer_matches:
+                score_delta -= 0.26
+                reason_codes.append("same_sentence_without_answer_cue")
+
+        question_tokens = set(self._content_tokens(normalized_question))
+        answer_tokens = set(self._content_tokens(normalized_answer))
+        overlap_ratio = 0.0
+        added_answer_token_count = 0
+        if question_tokens and answer_tokens:
+            overlap_ratio = len(question_tokens & answer_tokens) / max(
+                1,
+                len(answer_tokens),
+            )
+            added_answer_token_count = len(answer_tokens - question_tokens)
+        if (
+            overlap_ratio >= 0.72
+            and added_answer_token_count <= 1
+        ):
+            score_delta -= 0.28
+            reason_codes.append("answer_echoes_question_penalty")
+
+        answer_matches = collect_rule_matches(normalized_answer, ANSWER_CUE_RULES)
+        answer_numbers = self._number_tokens(normalized_answer)
+        if (
+            count_tokens(normalized_answer) <= 4
+            and not answer_matches
+            and not answer_numbers
+        ):
+            score_delta -= 0.12
+            reason_codes.append("low_information_answer_penalty")
+
+        if self._looks_like_incomplete_answer_span(answer.answer_text):
+            score_delta -= 0.10
+            reason_codes.append("incomplete_answer_span_penalty")
+
+        cue_alignment = self._question_answer_alignment(
+            question_text=question.question_text,
+            answer_text=answer.answer_text,
+            question_type=question.question_type,
+            answer_source=str(answer.search_signals.get("answer_source") or ""),
+        )
+        shared_keywords = cue_alignment.get("shared_keywords") or []
+        answer_cue_score = min(0.30, sum(match.weight for match in answer_matches))
+        relevance_score = float(cue_alignment.get("relevance_score") or 0.0)
+        if answer_cue_score > 0.0 and relevance_score <= 0.0 and not shared_keywords:
+            score_delta -= 0.18
+            reason_codes.append("surface_answer_cue_penalty")
+
+        if (
+            self.config.pipeline_profile == "quality_local"
+            and answer.search_signals.get("candidate_channel") == "deferred_answer_search"
+            and count_tokens(normalized_answer) > 45
+        ):
+            score_delta -= 0.14
+            reason_codes.append("deferred_answer_too_broad_penalty")
+
+        return {
+            "score_delta": round(score_delta, 4),
+            "reason_codes": self._unique_strings(reason_codes),
+            "debug": {
+                "added_answer_token_count": added_answer_token_count,
+                "overlap_ratio": round(overlap_ratio, 4),
+                "score_delta": round(score_delta, 4),
+            },
+        }
+
+    def _score_answer_span_completeness(
+        self,
+        *,
+        question: QuestionCandidate,
+        answer: _AnswerCandidate,
+        full_alignment: dict[str, Any],
+        full_answer_matches: Sequence[Any],
+    ) -> dict[str, Any]:
+        """Return a light preference for answer spans that add substance."""
+
+        score_delta = 0.0
+        reason_codes: list[str] = []
+        normalized_answer = normalize_rule_text(answer.answer_text)
+        token_count = count_tokens(normalized_answer)
+        full_signal_score = float(full_alignment.get("signal_score") or 0.0)
+        full_has_signal = bool(
+            full_alignment.get("shared_keywords")
+            or full_alignment.get("shared_numbers")
+            or full_answer_matches
+        )
+        first_unit_text = answer.answer_units[0].text if answer.answer_units else ""
+        first_alignment = self._question_answer_alignment(
+            question_text=question.question_text,
+            answer_text=first_unit_text,
+            question_type=question.question_type,
+            answer_source=str(answer.search_signals.get("answer_source") or ""),
+        )
+        first_matches = collect_rule_matches(
+            normalize_rule_text(first_unit_text),
+            ANSWER_CUE_RULES,
+        )
+        first_incomplete = self._looks_like_incomplete_answer_span(first_unit_text)
+        first_signal_score = float(first_alignment.get("signal_score") or 0.0)
+        first_has_signal = bool(
+            first_alignment.get("shared_keywords")
+            or first_alignment.get("shared_numbers")
+            or first_matches
+        )
+
+        if len(answer.answer_units) > 1:
+            signal_gain = full_signal_score - first_signal_score
+            if (
+                full_has_signal
+                and token_count <= 70
+                and (signal_gain >= 0.08 or not first_has_signal)
+            ):
+                score_delta += 0.12
+                reason_codes.append("answer_span_extension_support")
+            elif first_incomplete and full_has_signal and token_count <= 70:
+                score_delta += 0.08
+                reason_codes.append("answer_span_completion_support")
+            elif token_count > 80:
+                score_delta -= 0.08
+                reason_codes.append("answer_span_too_broad_penalty")
+        elif (
+            self.config.pipeline_profile == "quality_local"
+            and not full_has_signal
+            and token_count <= 9
+            and answer.distance_units <= 1
+        ):
+            score_delta -= 0.10
+            reason_codes.append("premise_only_answer_penalty")
+
+        return {
+            "score_delta": round(score_delta, 4),
+            "reason_codes": self._unique_strings(reason_codes),
+            "debug": {
+                "answer_unit_count": len(answer.answer_units),
+                "token_count": token_count,
+                "first_signal_score": round(first_signal_score, 4),
+                "full_signal_score": round(full_signal_score, 4),
+                "first_has_signal": first_has_signal,
+                "full_has_signal": full_has_signal,
+                "first_incomplete": first_incomplete,
                 "score_delta": round(score_delta, 4),
             },
         }
@@ -2161,7 +2805,7 @@ class QAPairExtractor:
             base_confidence - competing_penalty - fallback_penalty,
         )
         if answer.metadata.get("answer_is_question"):
-            confidence = self._clamp(confidence - 0.12)
+            confidence = self._clamp(confidence - 0.24)
         confidence_label = self._confidence_label(confidence)
         source_segment_ids = self._unique_strings(
             question.question_segment_ids + answer.answer_segment_ids,
@@ -2210,8 +2854,21 @@ class QAPairExtractor:
         end_seconds = (
             answer_timing.end_seconds if answer_timing else answer.answer_units[-1].end_seconds
         )
+        quality_features = self._build_candidate_quality_features(
+            question=question,
+            answer=answer,
+            context_extraction=context_extraction,
+            confidence=confidence,
+            input_layer=input_layer,
+            segment_relation=segment_relation,
+            reason_codes=reason_codes,
+            review_flags=review_flags,
+            question_timing_source=question_grounding_debug["timing_source"],
+            answer_timing_source=answer_grounding_debug["timing_source"],
+        )
         metadata = {
             "input_layer": input_layer,
+            "quality_features": quality_features,
             "question_debug": {
                 "question_score": question.question_score,
                 "question_unit_index": question.unit_index,
@@ -2339,7 +2996,7 @@ class QAPairExtractor:
                 "competing_question_penalty": competing_penalty,
                 "fallback_penalty": fallback_penalty,
                 "answer_is_question_penalty": (
-                    0.12 if answer.metadata.get("answer_is_question") else 0.0
+                    0.24 if answer.metadata.get("answer_is_question") else 0.0
                 ),
                 "final_confidence": confidence,
             },
@@ -2419,6 +3076,10 @@ class QAPairExtractor:
             context_confidence = "medium"
 
         context_units = self._dedupe_context_units(context_units, question, answer)
+        if not context_units:
+            context_units = self._fallback_context_units(question, answer, units)
+            context_strategy = "fallback_previous_context"
+            context_confidence = "low"
         context_raw_text = self._build_context_raw_text(context_units)
         context_text = self._summarize_context_text(
             question=question,
@@ -2505,6 +3166,32 @@ class QAPairExtractor:
         if not context_units and question.metadata.get("question_preamble"):
             context_units.append(question.unit)
         return context_units
+
+    def _fallback_context_units(
+        self,
+        question: QuestionCandidate,
+        answer: _AnswerCandidate,
+        units: Sequence[_ExtractionUnit],
+    ) -> list[_ExtractionUnit]:
+        """Return nearby setup when topic matching found no context."""
+
+        del answer
+        fallback_units: list[_ExtractionUnit] = []
+        question_start_index = question.question_units[0].index
+        for candidate_index in range(max(0, question_start_index - 2), question_start_index):
+            candidate_unit = units[candidate_index]
+            if candidate_unit.audio_source_id != question.unit.audio_source_id:
+                continue
+            if self._is_filler_or_boilerplate_answer(
+                normalize_rule_text(candidate_unit.text),
+            ):
+                continue
+            fallback_units.append(candidate_unit)
+        if fallback_units:
+            return fallback_units
+        if question.metadata.get("question_preamble"):
+            return [question.unit]
+        return []
 
     def _dedupe_context_units(
         self,
@@ -2698,7 +3385,280 @@ class QAPairExtractor:
             flags.append("segment_unknown")
         if answer_is_question:
             flags.append("answer_is_question")
+        if "rhetorical_poll_question" in reason_codes:
+            flags.append("rhetorical_poll_question")
+        if "poll_or_backchannel_noise" in reason_codes:
+            flags.append("poll_or_backchannel_noise")
+        if "procedural_question_request" in reason_codes:
+            flags.append("procedural_question_request")
+        if "fragment_question" in reason_codes:
+            flags.append("fragment_question")
+        if "declarative_tag_question" in reason_codes:
+            flags.append("declarative_tag_question")
+        if "answer_echoes_question_penalty" in reason_codes:
+            flags.append("same_sentence_echo")
+        if "same_sentence_without_answer_cue" in reason_codes:
+            flags.append("same_sentence_without_answer_cue")
+        if "quality_local_deferred_penalty" in reason_codes:
+            flags.append("quality_local_deferred")
+        if "answer_boilerplate_penalty" in reason_codes:
+            flags.append("answer_boilerplate")
+        if "low_information_answer_penalty" in reason_codes:
+            flags.append("low_information_answer")
+        if "incomplete_answer_span_penalty" in reason_codes:
+            flags.append("incomplete_answer_span")
+        if "surface_answer_cue_penalty" in reason_codes:
+            flags.append("surface_answer_cue")
+        if "deferred_answer_too_broad_penalty" in reason_codes:
+            flags.append("deferred_answer_too_broad")
+        if "question_intent_poll_or_check" in reason_codes:
+            flags.append("poll_or_check_question")
+        if "question_intent_rhetorical_tag" in reason_codes:
+            flags.append("rhetorical_tag_question")
+        if "question_intent_fragment" in reason_codes:
+            flags.append("fragment_question")
+        if "question_intent_subordinate_fragment" in reason_codes:
+            flags.append("subordinate_fragment_question")
+        if "question_intent_embedded_statement" in reason_codes:
+            flags.append("embedded_statement_question")
+        if "question_intent_weak_form" in reason_codes:
+            flags.append("weak_question_form")
         return self._unique_strings(flags)
+
+    def _build_candidate_quality_features(
+        self,
+        *,
+        question: QuestionCandidate,
+        answer: _AnswerCandidate,
+        context_extraction: _ContextExtraction,
+        confidence: float,
+        input_layer: str,
+        segment_relation: str,
+        reason_codes: Sequence[str],
+        review_flags: Sequence[str],
+        question_timing_source: str,
+        answer_timing_source: str,
+    ) -> dict[str, Any]:
+        """Return compact diagnostic quality features for one QA candidate."""
+
+        reason_set = set(reason_codes)
+        review_flag_set = set(review_flags)
+        question_quality_score = self._clamp(
+            0.70 * float(question.question_score)
+            + 0.30 * float(question.didactic_question_score or 0.0),
+        )
+        answer_quality_score = self._clamp(float(answer.answer_score))
+        context_quality_score = self._context_quality_feature_score(context_extraction)
+        grounding_quality_score = self._grounding_quality_feature_score(
+            question=question,
+            answer=answer,
+            context_extraction=context_extraction,
+            input_layer=input_layer,
+            segment_relation=segment_relation,
+            question_timing_source=question_timing_source,
+            answer_timing_source=answer_timing_source,
+        )
+        risk_reasons, risk_score = self._quality_risk_reasons_and_score(
+            reason_codes=reason_set,
+            review_flags=review_flag_set,
+            confidence=confidence,
+            question=question,
+            answer=answer,
+            context_extraction=context_extraction,
+        )
+        base_quality_score = self._clamp(
+            (0.34 * question_quality_score)
+            + (0.38 * answer_quality_score)
+            + (0.16 * context_quality_score)
+            + (0.12 * grounding_quality_score),
+        )
+        final_quality_score = self._clamp(base_quality_score - (0.45 * risk_score))
+
+        return {
+            "schema_version": "1.0",
+            "question_quality_score": round(question_quality_score, 4),
+            "answer_quality_score": round(answer_quality_score, 4),
+            "context_quality_score": round(context_quality_score, 4),
+            "grounding_quality_score": round(grounding_quality_score, 4),
+            "risk_score": round(risk_score, 4),
+            "final_quality_score": round(final_quality_score, 4),
+            "quality_band": self._quality_band(final_quality_score),
+            "risk_band": self._risk_band(risk_score),
+            "risk_reasons": risk_reasons,
+        }
+
+    @staticmethod
+    def _context_quality_feature_score(
+        context_extraction: _ContextExtraction,
+    ) -> float:
+        """Return compact context quality from exported context metadata."""
+
+        if not context_extraction.context_text:
+            return 0.20
+        if context_extraction.context_confidence == "high":
+            return 0.90
+        if context_extraction.context_confidence == "medium":
+            return 0.68
+        if context_extraction.context_confidence == "low":
+            return 0.40
+        return 0.55
+
+    def _grounding_quality_feature_score(
+        self,
+        *,
+        question: QuestionCandidate,
+        answer: _AnswerCandidate,
+        context_extraction: _ContextExtraction,
+        input_layer: str,
+        segment_relation: str,
+        question_timing_source: str,
+        answer_timing_source: str,
+    ) -> float:
+        """Return compact grounding quality without duplicating debug payloads."""
+
+        score = 0.0
+        if input_layer == "sentences":
+            score += 0.18
+        if question.question_sentence_ids:
+            score += 0.12
+        if answer.answer_sentence_ids:
+            score += 0.12
+        if question.question_source_utterance_ids:
+            score += 0.14
+        if answer.answer_source_utterance_ids:
+            score += 0.14
+        if question_timing_source != "missing":
+            score += 0.08
+        if answer_timing_source != "missing":
+            score += 0.08
+        if segment_relation == "same_segment":
+            score += 0.10
+        elif segment_relation == "next_segment":
+            score += 0.06
+        elif segment_relation == "distant_segment":
+            score -= 0.08
+        if context_extraction.context_sentence_ids:
+            score += 0.04
+        return self._clamp(score)
+
+    def _quality_risk_reasons_and_score(
+        self,
+        *,
+        reason_codes: set[str],
+        review_flags: set[str],
+        confidence: float,
+        question: QuestionCandidate,
+        answer: _AnswerCandidate,
+        context_extraction: _ContextExtraction,
+    ) -> tuple[list[str], float]:
+        """Return compact risk reasons and normalized risk score."""
+
+        risk_weights = {
+            "low_confidence": 0.20,
+            "fallback_input_layer": 0.16,
+            "answer_is_question": 0.28,
+            "rhetorical_poll_question": 0.28,
+            "poll_or_backchannel_noise": 0.22,
+            "procedural_question_request": 0.24,
+            "poll_or_check_question": 0.24,
+            "fragment_question": 0.24,
+            "subordinate_fragment_question": 0.24,
+            "declarative_tag_question": 0.22,
+            "weak_question_form": 0.22,
+            "embedded_statement_question": 0.18,
+            "same_sentence_echo": 0.24,
+            "same_sentence_without_answer_cue": 0.24,
+            "answer_boilerplate": 0.24,
+            "low_information_answer": 0.20,
+            "incomplete_answer_span": 0.14,
+            "surface_answer_cue": 0.22,
+            "deferred_answer_too_broad": 0.20,
+            "quality_local_deferred": 0.14,
+            "competing_question": 0.08,
+            "segment_unknown": 0.08,
+        }
+        reason_aliases = {
+            "low_question_answer_relevance": "low_relevance",
+            "answer_echoes_question_penalty": "same_sentence_echo",
+            "answer_boilerplate_penalty": "answer_boilerplate",
+            "same_sentence_without_answer_cue": "same_sentence_without_answer_cue",
+            "premise_only_answer_penalty": "premise_only_answer",
+            "moderator_handoff_answer_penalty": "moderator_handoff_answer",
+            "incomplete_answer_span_penalty": "incomplete_answer_span",
+            "surface_answer_cue_penalty": "surface_answer_cue",
+            "deferred_long_temporal_gap": "deferred_long_gap",
+            "distant_segment_penalty": "distant_segment",
+        }
+        extra_weights = {
+            "low_relevance": 0.32,
+            "premise_only_answer": 0.28,
+            "moderator_handoff_answer": 0.20,
+            "deferred_long_gap": 0.14,
+            "distant_segment": 0.10,
+            "implicit_question_risk": 0.22,
+            "weak_context_risk": 0.14,
+            "surface_answer_cue_risk": 0.22,
+        }
+
+        reasons: list[str] = []
+        risk_score = 0.0
+        for flag in sorted(review_flags):
+            if flag not in risk_weights:
+                continue
+            reasons.append(flag)
+            risk_score += risk_weights[flag]
+        for reason_code, alias in sorted(reason_aliases.items()):
+            if reason_code not in reason_codes or alias in reasons:
+                continue
+            reasons.append(alias)
+            risk_score += extra_weights.get(alias, risk_weights.get(alias, 0.0))
+        if confidence < 0.45 and "low_confidence" not in reasons:
+            reasons.append("low_confidence")
+            risk_score += risk_weights["low_confidence"]
+        elif confidence < 0.75 and "medium_confidence" in review_flags:
+            risk_score += 0.04
+
+        if (
+            "question_mark" not in reason_codes
+            and "question_intent_autonomous_head" not in reason_codes
+            and "question_intent_didactic_cue" not in reason_codes
+        ):
+            reasons.append("implicit_question_risk")
+            risk_score += extra_weights["implicit_question_risk"]
+        if (
+            not context_extraction.context_text
+            or context_extraction.context_confidence == "low"
+        ):
+            reasons.append("weak_context_risk")
+            risk_score += extra_weights["weak_context_risk"]
+        partial_scores = answer.partial_scores
+        answer_cue_score = float(partial_scores.get("answer_cues") or 0.0)
+        relevance_score = float(partial_scores.get("relevance") or 0.0)
+        if answer_cue_score > 0.0 and relevance_score <= 0.0:
+            reasons.append("surface_answer_cue_risk")
+            risk_score += extra_weights["surface_answer_cue_risk"]
+
+        return self._unique_strings(reasons)[:8], self._clamp(risk_score)
+
+    @staticmethod
+    def _quality_band(score: float) -> str:
+        """Return a compact quality band for a normalized score."""
+
+        if score >= 0.74:
+            return "high"
+        if score >= 0.50:
+            return "medium"
+        return "low"
+
+    @staticmethod
+    def _risk_band(score: float) -> str:
+        """Return a compact risk band for a normalized score."""
+
+        if score >= 0.55:
+            return "high"
+        if score >= 0.25:
+            return "medium"
+        return "low"
 
     def _can_use_answer_units(
         self,
@@ -2733,6 +3693,39 @@ class QAPairExtractor:
 
         if not self.config.deferred_answer_search_enabled:
             return {"triggered": False, "reason": "disabled"}
+        if "rhetorical_checkin_question" in question.reason_codes:
+            return {
+                "triggered": False,
+                "reason": "rhetorical_checkin_question",
+                "didactic_question_score": question.didactic_question_score,
+            }
+        if "rhetorical_poll_question" in question.reason_codes:
+            return {
+                "triggered": False,
+                "reason": "rhetorical_poll_question",
+                "didactic_question_score": question.didactic_question_score,
+            }
+        if "fragment_question" in question.reason_codes:
+            return {
+                "triggered": False,
+                "reason": "fragment_question",
+                "didactic_question_score": question.didactic_question_score,
+            }
+        if "declarative_tag_question" in question.reason_codes:
+            return {
+                "triggered": False,
+                "reason": "declarative_tag_question",
+                "didactic_question_score": question.didactic_question_score,
+            }
+        if self.config.pipeline_profile == "quality_local" and (
+            "question_intent_embedded_statement" in question.reason_codes
+            or "question_intent_weak_form" in question.reason_codes
+        ):
+            return {
+                "triggered": False,
+                "reason": "weak_question_intent",
+                "didactic_question_score": question.didactic_question_score,
+            }
         if question.didactic_question_score < (
             self.config.deferred_answer_search_min_question_score
         ):
@@ -2744,6 +3737,15 @@ class QAPairExtractor:
 
         best_answer = ranked_answers[0] if ranked_answers else None
         best_answer_score = best_answer.answer_score if best_answer is not None else None
+        if self._has_strong_local_answer(best_answer):
+            return {
+                "triggered": False,
+                "reason": "strong_local_answer",
+                "low_local_relevance": False,
+                "best_answer_score": best_answer_score,
+                "best_semantic_score": None,
+                "didactic_question_score": question.didactic_question_score,
+            }
         best_semantic_score = None
         if best_answer is not None:
             best_semantic_score = self._safe_float(
@@ -2788,6 +3790,26 @@ class QAPairExtractor:
             "didactic_question_score": question.didactic_question_score,
             "recurrence_debug": recurrence_debug,
         }
+
+    @staticmethod
+    def _has_strong_local_answer(answer: _AnswerCandidate | None) -> bool:
+        """Return whether a local answer is strong enough to avoid deferred search."""
+
+        if answer is None:
+            return False
+        if answer.answer_score < 0.52:
+            return False
+        if answer.gap_seconds > 10.0:
+            return False
+        if answer.metadata.get("answer_is_question"):
+            return False
+        alignment_debug = answer.metadata.get("qa_alignment_debug", {})
+        if not (
+            alignment_debug.get("shared_keywords")
+            or alignment_debug.get("shared_numbers")
+        ):
+            return False
+        return answer.metadata.get("segment_relation") != "distant_segment"
 
     def _scan_deferred_recurrence(
         self,
@@ -2869,6 +3891,12 @@ class QAPairExtractor:
             )
             if alignment["signal_score"] < self.config.deferred_answer_search_min_signal_score:
                 continue
+            if not self._deferred_alignment_is_strong_enough(
+                question=question,
+                candidate_unit=candidate_unit,
+                alignment=alignment,
+            ):
+                continue
 
             distance_units = candidate_index - question.unit_index
             for span_length in range(1, self.config.max_answer_units + 1):
@@ -2912,6 +3940,54 @@ class QAPairExtractor:
                 candidate.metadata["answer_source"] = "deferred_answer_search"
                 candidates.append(candidate)
         return candidates
+
+    def _deferred_alignment_is_strong_enough(
+        self,
+        *,
+        question: QuestionCandidate,
+        candidate_unit: _ExtractionUnit,
+        alignment: dict[str, Any],
+    ) -> bool:
+        """Return whether a far answer has enough signal to beat local search."""
+
+        shared_keywords = [
+            keyword
+            for keyword in alignment.get("shared_keywords", [])
+            if keyword not in _WEAK_DEFERRED_KEYWORDS
+        ]
+        shared_numbers = list(alignment.get("shared_numbers", []))
+        distance_units = candidate_unit.index - question.unit_index
+        gap_seconds = max(0.0, candidate_unit.start_seconds - question.unit.end_seconds)
+        signal_score = float(alignment.get("signal_score") or 0.0)
+
+        if self._is_moderator_handoff_answer(normalize_rule_text(candidate_unit.text)):
+            return False
+        if self._is_filler_or_boilerplate_answer(normalize_rule_text(candidate_unit.text)):
+            return False
+        if not shared_keywords and not shared_numbers:
+            return False
+        if self.config.pipeline_profile == "quality_local":
+            if gap_seconds > 75.0 and (
+                signal_score < 0.38 or (len(shared_keywords) < 4 and not shared_numbers)
+            ):
+                return False
+            if gap_seconds > 30.0 and (
+                signal_score < 0.30 or (len(shared_keywords) < 2 and not shared_numbers)
+            ):
+                return False
+            if distance_units > 10 and (
+                signal_score < 0.30 or (len(shared_keywords) < 3 and not shared_numbers)
+            ):
+                return False
+        if gap_seconds > 120.0 and (
+            signal_score < 0.34 or (len(shared_keywords) < 3 and not shared_numbers)
+        ):
+            return False
+        if gap_seconds > 60.0 and signal_score < 0.28:
+            return False
+        if distance_units > 12 and signal_score < 0.24 and len(shared_keywords) < 2:
+            return False
+        return True
 
     @staticmethod
     def _merge_answer_candidates(
@@ -3083,6 +4159,309 @@ class QAPairExtractor:
         if "?" in cleaned_text:
             return True
         return self._starts_with_interrogative_word(normalized_text)
+
+    def _classify_question_intent(
+        self,
+        *,
+        normalized_text: str,
+        has_question_mark: bool,
+        question_matches: Sequence[Any],
+        didactic_matches: Sequence[Any],
+        token_count: int,
+        is_poll_question: bool,
+        is_declarative_tag_question: bool,
+        is_fragment_question: bool,
+        is_rhetorical_checkin: bool,
+    ) -> dict[str, Any]:
+        """Classify question intent from structural cues, not exact examples."""
+
+        stripped = normalized_text.rstrip(" ?.!").strip()
+        has_question_head = self._has_autonomous_question_head(stripped)
+        first_cue_index = self._first_question_cue_token_index(stripped)
+        embedded_cue = (
+            first_cue_index is not None
+            and first_cue_index >= 3
+            and not has_question_head
+        )
+        subordinate_fragment = self._is_subordinate_question_fragment(
+            normalized_text=normalized_text,
+            has_question_mark=has_question_mark,
+        )
+        score_delta = 0.0
+        reason_codes: list[str] = []
+        question_intent = "information_seeking"
+
+        if is_poll_question or is_rhetorical_checkin:
+            question_intent = "poll_or_check"
+            score_delta -= 0.18
+            reason_codes.append("question_intent_poll_or_check")
+        elif is_declarative_tag_question:
+            question_intent = "rhetorical_tag"
+            score_delta -= 0.18
+            reason_codes.append("question_intent_rhetorical_tag")
+        elif is_fragment_question:
+            question_intent = "fragment"
+            score_delta -= 0.16
+            reason_codes.append("question_intent_fragment")
+        elif subordinate_fragment:
+            question_intent = "subordinate_fragment"
+            score_delta -= 0.18
+            reason_codes.append("question_intent_subordinate_fragment")
+        elif embedded_cue:
+            question_intent = "embedded_statement_question"
+            score_delta -= 0.12
+            reason_codes.append("question_intent_embedded_statement")
+        elif has_question_mark and not has_question_head and not didactic_matches:
+            question_intent = "weak_question_form"
+            score_delta -= 0.10
+            reason_codes.append("question_intent_weak_form")
+
+        if has_question_head:
+            reason_codes.append("question_intent_autonomous_head")
+        if didactic_matches:
+            reason_codes.append("question_intent_didactic_cue")
+        if token_count <= 3 and not has_question_head:
+            score_delta -= 0.08
+            reason_codes.append("question_intent_short_without_head")
+
+        return {
+            "question_intent": question_intent,
+            "score_delta": round(score_delta, 4),
+            "reason_codes": self._unique_strings(reason_codes),
+            "debug": {
+                "has_question_head": has_question_head,
+                "first_cue_token_index": first_cue_index,
+                "embedded_cue": embedded_cue,
+                "subordinate_fragment": subordinate_fragment,
+                "token_count": token_count,
+            },
+        }
+
+    def _has_autonomous_question_head(self, normalized_text: str) -> bool:
+        """Return whether a candidate starts like an autonomous question."""
+
+        if self._starts_with_interrogative_word(normalized_text):
+            return True
+        first_word = normalized_text.split(maxsplit=1)[0] if normalized_text else ""
+        first_word = first_word.split("'", maxsplit=1)[0]
+        return first_word in _AUXILIARY_QUESTION_START_WORDS
+
+    @staticmethod
+    def _first_question_cue_token_index(normalized_text: str) -> int | None:
+        """Return first token offset of a broad interrogative cue."""
+
+        tokens = re.findall(r"\b[\w']+\b", normalized_text)
+        cue_words = set(INTERROGATIVE_START_WORDS) | _AUXILIARY_QUESTION_START_WORDS
+        for index, token in enumerate(tokens):
+            if token in cue_words or token.split("'", maxsplit=1)[0] in cue_words:
+                return index
+        return None
+
+    @staticmethod
+    def _is_subordinate_question_fragment(
+        *,
+        normalized_text: str,
+        has_question_mark: bool,
+    ) -> bool:
+        """Return whether an implicit question is likely a subordinate clause."""
+
+        if has_question_mark:
+            return False
+        stripped = normalized_text.rstrip(" ?.!").strip()
+        if not stripped:
+            return False
+        tokens = re.findall(r"\b[\w']+\b", stripped)
+        if len(tokens) < 3:
+            return False
+        if _EXPLANATORY_CLAUSE_START_RE.search(stripped):
+            return True
+        if tokens[0] not in _SUBORDINATE_QUESTION_START_WORDS:
+            return False
+        if len(tokens) > 7:
+            return False
+        if len(tokens) > 1 and tokens[1].split("'", maxsplit=1)[0] in (
+            _AUXILIARY_QUESTION_START_WORDS
+        ):
+            return False
+        return True
+
+    @staticmethod
+    def _is_rhetorical_checkin_question(normalized_text: str) -> bool:
+        """Return whether a question is only a discourse tag."""
+
+        stripped = normalized_text.rstrip(" ?.!").strip()
+        return stripped in _DISCOURSE_TAG_QUESTIONS
+
+    @staticmethod
+    def _is_rhetorical_poll_question(normalized_text: str) -> bool:
+        """Return whether a question is a classroom poll rather than a QA prompt."""
+
+        stripped = normalized_text.rstrip(" ?.!").strip()
+        if not stripped:
+            return False
+        if _RHETORICAL_POLL_QUESTION_RE.fullmatch(stripped):
+            return True
+        tokens = re.findall(r"\b[\w']+\b", stripped)
+        if not tokens or len(tokens) > 6:
+            return False
+        poll_tokens = {
+            "0",
+            "1",
+            "2",
+            "3",
+            "4",
+            "5",
+            "one",
+            "two",
+            "three",
+            "four",
+            "five",
+            "uno",
+            "due",
+            "tre",
+            "quattro",
+            "cinque",
+            "or",
+            "o",
+        }
+        return all(token in poll_tokens for token in tokens) and any(
+            token.isdigit()
+            or token in {"one", "two", "three", "four", "five", "uno", "due", "tre"}
+            for token in tokens
+        )
+
+    @staticmethod
+    def _is_declarative_tag_question(
+        *,
+        normalized_text: str,
+        has_question_mark: bool,
+        question_matches: Sequence[Any],
+        didactic_matches: Sequence[Any],
+    ) -> bool:
+        """Return whether a question is mostly a statement plus a tag."""
+
+        if not has_question_mark or question_matches or didactic_matches:
+            return False
+        stripped = normalized_text.rstrip(" ?.!").strip()
+        if not stripped:
+            return False
+        parts = stripped.rsplit(maxsplit=1)
+        if len(parts) == 1:
+            return False
+        if not _TAG_QUESTION_RE.fullmatch(parts[-1]):
+            return False
+        return not QAPairExtractor._starts_with_interrogative_word(stripped)
+
+    @staticmethod
+    def _is_fragment_question(
+        *,
+        normalized_text: str,
+        has_question_mark: bool,
+        question_matches: Sequence[Any],
+        didactic_matches: Sequence[Any],
+    ) -> bool:
+        """Return whether a question is too fragmentary to stand alone."""
+
+        if not has_question_mark:
+            return False
+        if question_matches or didactic_matches:
+            return False
+        stripped = normalized_text.rstrip(" ?.!").strip()
+        if QAPairExtractor._starts_with_interrogative_word(stripped):
+            return False
+        if any(pattern.fullmatch(stripped) for pattern in _ANAPHORIC_QUESTION_PATTERNS):
+            return False
+        token_count = count_tokens(stripped)
+        if token_count <= 3:
+            return True
+        if stripped.startswith(("and ", "or ", "but ", "so ", "then ", "e ", "o ")):
+            return True
+        return False
+
+    @staticmethod
+    def _is_moderator_handoff_answer(normalized_text: str) -> bool:
+        """Return whether an answer looks like a speaker hand-off."""
+
+        return any(
+            pattern.search(normalized_text)
+            for pattern in _MODERATOR_HANDOFF_PATTERNS
+        )
+
+    @staticmethod
+    def _is_filler_or_boilerplate_answer(normalized_text: str) -> bool:
+        """Return whether an answer is mostly transition or lecture boilerplate."""
+
+        stripped = normalized_text.rstrip(" ?.!").strip()
+        if stripped in _FILLER_ANSWERS:
+            return True
+        return any(
+            pattern.search(stripped)
+            for pattern in _ANSWER_BOILERPLATE_PATTERNS
+        )
+
+    @staticmethod
+    def _trim_answer_meta_opening(text: str) -> tuple[str, str | None]:
+        """Remove short meta openings when substantive answer text follows."""
+
+        cleaned_text = text.strip()
+        match = _META_ANSWER_OPENING_RE.match(cleaned_text)
+        if not match:
+            return cleaned_text, None
+        rest = re.sub(r"\s+", " ", match.group("rest")).strip(" ,.-")
+        if count_tokens(normalize_rule_text(rest)) < 3:
+            return cleaned_text, None
+        return rest, "answer_meta_opening_trimmed"
+
+    @staticmethod
+    def _looks_like_incomplete_answer_span(text: str) -> bool:
+        """Return whether an answer span appears to stop before resolving."""
+
+        cleaned_text = text.strip()
+        if not cleaned_text:
+            return False
+        normalized_text = normalize_rule_text(cleaned_text).rstrip(" ,;:")
+        if not normalized_text:
+            return False
+        tokens = re.findall(r"\b[\w']+\b", normalized_text)
+        if not tokens:
+            return False
+        if tokens[-1] in _INCOMPLETE_ANSWER_END_WORDS:
+            return True
+        if (
+            _INCOMPLETE_ANSWER_START_RE.search(normalized_text)
+            and not cleaned_text.endswith((".", "?", "!"))
+            and count_tokens(normalized_text) <= 8
+        ):
+            return True
+        return False
+
+    @staticmethod
+    def _has_poll_or_backchannel_noise(normalized_text: str) -> bool:
+        """Return whether a candidate contains classroom polling/check-in noise."""
+
+        stripped = normalized_text.rstrip(" ?.!;:").strip()
+        if not stripped:
+            return False
+        if _BACKCHANNEL_CHECK_RE.search(stripped):
+            return True
+        tokens = re.findall(r"\b[\w']+\b", stripped)
+        if not tokens:
+            return False
+        option_count = sum(1 for token in tokens if token in _POLL_OPTION_WORDS)
+        if option_count >= 3:
+            return True
+        if option_count >= 2 and len(tokens) <= 10:
+            return True
+        return False
+
+    @staticmethod
+    def _is_procedural_question_request(normalized_text: str) -> bool:
+        """Return whether a question is mainly about managing the Q&A turn."""
+
+        stripped = normalized_text.rstrip(" ?.!;:").strip()
+        if not stripped:
+            return False
+        return bool(_PROCEDURAL_QUESTION_RE.search(stripped))
 
     def _question_answer_alignment(
         self,
