@@ -1208,6 +1208,7 @@ class QAPairExtractor:
             "fragment_question",
             "question_intent_subordinate_fragment",
             "procedural_question_request",
+            "low_autonomy_implicit_question",
         }
         if reason_codes & weak_question_reasons:
             return False
@@ -1217,6 +1218,7 @@ class QAPairExtractor:
             "answer_boilerplate_penalty",
             "moderator_handoff_answer_penalty",
             "low_information_answer_penalty",
+            "answer_circular_echo_penalty",
         }
         if reason_codes & weak_pair_reasons and candidate.confidence < 0.72:
             return False
@@ -1532,6 +1534,8 @@ class QAPairExtractor:
             reason_codes.extend(context_expansion["reason_codes"])
             if extracted.intra_sentence_qa:
                 reason_codes.append("intra_sentence_qa")
+            if self._is_low_autonomy_implicit_question(reason_codes):
+                reason_codes.append("low_autonomy_implicit_question")
 
             candidates.append(
                 QuestionCandidate(
@@ -1811,6 +1815,25 @@ class QAPairExtractor:
             "token_count": token_count,
             "question_intent_debug": intent_evaluation["debug"],
         }
+
+    @staticmethod
+    def _is_low_autonomy_implicit_question(reason_codes: Sequence[str]) -> bool:
+        """Return whether an implicit cue question has weak sentence autonomy."""
+
+        reason_set = set(reason_codes)
+        if "question_mark" in reason_set:
+            return False
+        if not {"implicit_question_cue", "cue_sentence_extracted"}.issubset(
+            reason_set,
+        ):
+            return False
+        weak_structure_reasons = {
+            "question_sentence_quality_penalty",
+            "question_sentence_quality_borderline",
+            "question_merge_safety_penalty",
+            "intra_sentence_qa",
+        }
+        return bool(reason_set & weak_structure_reasons)
 
     def _expand_question_context(
         self,
@@ -2606,11 +2629,16 @@ class QAPairExtractor:
         question_tokens = set(self._content_tokens(normalized_question))
         answer_tokens = set(self._content_tokens(normalized_answer))
         overlap_ratio = 0.0
+        question_coverage_ratio = 0.0
         added_answer_token_count = 0
         if question_tokens and answer_tokens:
             overlap_ratio = len(question_tokens & answer_tokens) / max(
                 1,
                 len(answer_tokens),
+            )
+            question_coverage_ratio = len(question_tokens & answer_tokens) / max(
+                1,
+                len(question_tokens),
             )
             added_answer_token_count = len(answer_tokens - question_tokens)
         if (
@@ -2619,6 +2647,12 @@ class QAPairExtractor:
         ):
             score_delta -= 0.28
             reason_codes.append("answer_echoes_question_penalty")
+        elif (
+            question_coverage_ratio >= 0.68
+            and added_answer_token_count <= 2
+        ):
+            score_delta -= 0.22
+            reason_codes.append("answer_circular_echo_penalty")
 
         answer_matches = collect_rule_matches(normalized_answer, ANSWER_CUE_RULES)
         answer_numbers = self._number_tokens(normalized_answer)
@@ -2661,6 +2695,7 @@ class QAPairExtractor:
             "debug": {
                 "added_answer_token_count": added_answer_token_count,
                 "overlap_ratio": round(overlap_ratio, 4),
+                "question_coverage_ratio": round(question_coverage_ratio, 4),
                 "score_delta": round(score_delta, 4),
             },
         }
@@ -3508,8 +3543,12 @@ class QAPairExtractor:
             flags.append("fragment_question")
         if "declarative_tag_question" in reason_codes:
             flags.append("declarative_tag_question")
+        if "low_autonomy_implicit_question" in reason_codes:
+            flags.append("low_autonomy_implicit_question")
         if "answer_echoes_question_penalty" in reason_codes:
             flags.append("same_sentence_echo")
+        if "answer_circular_echo_penalty" in reason_codes:
+            flags.append("circular_answer_echo")
         if "same_sentence_without_answer_cue" in reason_codes:
             flags.append("same_sentence_without_answer_cue")
         if "quality_local_deferred_penalty" in reason_codes:
@@ -3695,7 +3734,9 @@ class QAPairExtractor:
             "declarative_tag_question": 0.22,
             "weak_question_form": 0.22,
             "embedded_statement_question": 0.18,
+            "low_autonomy_implicit_question": 0.24,
             "same_sentence_echo": 0.24,
+            "circular_answer_echo": 0.24,
             "same_sentence_without_answer_cue": 0.24,
             "answer_boilerplate": 0.24,
             "low_information_answer": 0.20,
@@ -3710,6 +3751,7 @@ class QAPairExtractor:
         reason_aliases = {
             "low_question_answer_relevance": "low_relevance",
             "answer_echoes_question_penalty": "same_sentence_echo",
+            "answer_circular_echo_penalty": "circular_answer_echo",
             "answer_boilerplate_penalty": "answer_boilerplate",
             "same_sentence_without_answer_cue": "same_sentence_without_answer_cue",
             "premise_only_answer_penalty": "premise_only_answer",

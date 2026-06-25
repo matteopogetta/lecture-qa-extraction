@@ -828,6 +828,59 @@ class QAPairExtractorTests(unittest.TestCase):
         )
         self.assertIn("weak_answer_responsiveness", unrelated_candidate.review_flags)
 
+    def test_marks_low_autonomy_implicit_questions(self) -> None:
+        """Implicit cue questions need sentence autonomy before quality export."""
+
+        session = self._build_session(
+            texts=[
+                "What alpha beta moves through gamma.",
+                "Delta continues through the next unit.",
+            ],
+            segment_text_indexes=[[0, 1]],
+            semantic_quality_labels=["fragment", "good"],
+            merge_safety_labels=["risky", "safe"],
+        )
+
+        candidate = self._build_extractor(
+            qa_answer_search_strategy="local_rule_based",
+            qa_answer_ranking_strategy="rule_based",
+            min_qa_confidence=0.0,
+        ).extract(session)[0]
+        self.assertIn("low_autonomy_implicit_question", candidate.reason_codes)
+        self.assertIn("low_autonomy_implicit_question", candidate.review_flags)
+
+        quality_candidates = self._build_extractor(
+            pipeline_profile="quality_local",
+            qa_answer_search_strategy="local_rule_based",
+            qa_answer_ranking_strategy="rule_based",
+            min_qa_confidence=0.0,
+        ).extract(session)
+        self.assertEqual(quality_candidates, [])
+
+    def test_circular_echo_answers_are_penalized(self) -> None:
+        """Adjacent answers that mostly recycle the question should stay risky."""
+
+        session = self._build_session(
+            texts=[
+                "What does alpha do?",
+                "Alpha does alpha state.",
+            ],
+            segment_text_indexes=[[0, 1]],
+        )
+
+        candidate = self._build_extractor(
+            qa_answer_search_strategy="local_rule_based",
+            qa_answer_ranking_strategy="rule_based",
+            min_qa_confidence=0.0,
+        ).extract(session)[0]
+
+        self.assertIn("answer_circular_echo_penalty", candidate.reason_codes)
+        self.assertIn("circular_answer_echo", candidate.review_flags)
+        self.assertLess(
+            candidate.metadata["answer_debug"]["partial_scores"]["quality_gate"],
+            0.0,
+        )
+
     def test_quality_features_penalize_surface_logistics_pairs(self) -> None:
         """Surface answer cues should not hide weak question-answer evidence."""
 

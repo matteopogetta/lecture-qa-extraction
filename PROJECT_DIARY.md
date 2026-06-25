@@ -1840,3 +1840,127 @@ Decisione:
 - Serve valutazione esterna AI mirata sulla run finale per confermare che la
   rimozione di un candidato su Eugenia sia positiva e che i miglioramenti
   interni non nascondano regressioni qualitative.
+
+## 2026-06-25 - Valutazione esterna AI su answer responsiveness v1
+
+Input valutato:
+
+- Run finale `quality_local structural` generata da Codex:
+  `/Users/matteopogetta/Documents/ExerPlazaSample/output/evaluation_batch_2026-06-25_202344`
+- Cartelle evaluation finali `2026-06-25_2023xx_quality_local_structural`.
+
+Risultati esterni sintetici:
+
+- Deep Time: quality score `2`, runtime value `2`. Il profilo senza
+  diarizzazione continua a fallire sui panel/monologhi: le Q/A sono spesso
+  auto-continuazioni dello stesso speaker, non risposte cross-speaker.
+- Eugenia: quality score `3`, runtime value `3`. Buono su contenuto dialogico,
+  ma restano continuation e same-speaker/self-continuation quando manca una
+  separazione affidabile dei turni.
+- L25P08: quality score `3`, runtime value `4`. Buona velocita' e almeno una
+  Q/A forte; failure mode principale: risposta meta/classroom-management o
+  non sostanziale selezionata per una domanda valida.
+- L25P09: quality score `2`, runtime value `3`. Failure mode dominante:
+  risposte circolari/echo e candidati sovrapposti che dovrebbero consolidarsi.
+- SSL1P1: quality score `2`, runtime value `3`. Failure mode dominante:
+  falsi positivi di question intent su dichiarative o subordinate causali, con
+  risposte che sono continuazioni sintattiche.
+- Stanford: quality score `4`, runtime value `4`. Il profilo locale e'
+  competitivo su seminari dialogici ben strutturati; restano embedded-statement,
+  declarative cue e run-on/echo.
+
+Conclusione:
+
+- `answer_responsiveness_score` e' utile come diagnostica/aggregato, ma non
+  basta come hard gate.
+- La prossima modifica deve agire prima o in parallelo al ranking risposta:
+  precisione della domanda candidata e rilevamento di continuazioni sintattiche
+  domanda-risposta.
+- Non implementare regole su frasi viste nelle review. I guardrail devono usare
+  proprieta' strutturali: autonomia della domanda, punteggi intent esistenti,
+  fragment/subordinate status, overlap/added information, stesso sentence/run,
+  contesto debole.
+
+Prossimo micro-ciclo scelto:
+
+- `question_autonomy_and_continuation_v1`.
+- Obiettivo: ridurre falsi positivi da declarative/subordinate/embedded
+  question e risposte che sono solo continuazioni/echo, senza abbassare il
+  buon comportamento su Stanford/Eugenia.
+
+## 2026-06-25 - Question autonomy and circular echo v1
+
+Obiettivo:
+
+- Agire sui failure mode emersi dalla review esterna senza usare frasi o casi
+  specifici: falsi positivi da cue impliciti dentro frasi deboli e risposte
+  circolari che riciclano quasi tutta la domanda.
+
+Implementazione:
+
+- Aggiunto reason code `low_autonomy_implicit_question` quando una domanda:
+  - non ha `?`;
+  - nasce da `implicit_question_cue` e `cue_sentence_extracted`;
+  - ha segnali strutturali deboli come sentence quality borderline/penalty,
+    merge safety penalty o `intra_sentence_qa`.
+- In `quality_local`, `low_autonomy_implicit_question` viene scartato come
+  weak question reason.
+- Aggiunta penalita' `answer_circular_echo_penalty` quando la risposta copre
+  quasi tutta la domanda ma aggiunge pochissimi token informativi. Questo copre
+  echo/circularita' anche tra frasi adiacenti, non solo same-sentence echo.
+- Aggiunti review flag/risk reason sintetici:
+  `low_autonomy_implicit_question` e `circular_answer_echo`.
+
+Parametri iniziali:
+
+- Circular echo: `question_coverage_ratio >= 0.68` e
+  `added_answer_token_count <= 2`, penalita' `-0.22`.
+- Il gate low-autonomy e' limitato a domande implicite senza `?`; le domande
+  esplicite con punto interrogativo restano valutate dai segnali esistenti.
+
+Test aggiunti:
+
+- Un caso astratto di implicit cue senza autonomia viene marcato e rifiutato da
+  `quality_local`.
+- Un caso astratto di risposta circolare viene penalizzato e marcato come
+  `circular_answer_echo`.
+
+Verifiche locali:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python -m unittest tests.test_qa_extractor
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python -m unittest discover -s tests
+python scripts/run_evaluation_batch.py --resume --profiles quality_local --segmentation-mode structural
+```
+
+Risultato test:
+
+- Test QA: `56` OK.
+- Suite completa: `168` OK.
+
+Run locale:
+
+- Output batch:
+  `/Users/matteopogetta/Documents/ExerPlazaSample/output/evaluation_batch_2026-06-25_204454`
+
+Confronto contro `answer_responsiveness_v1` (`2026-06-25_2023xx`):
+
+- Deep Time: `4 -> 4`, invariato.
+- Eugenia: `30 -> 26`; rimossi quattro candidati impliciti/frammentari o
+  narrativi. Signal interno `0.8359 -> 0.8069`, ancora `high`.
+- L25P08: `3 -> 3`, invariato.
+- L25P09: `5 -> 4`; rimosso il candidato circolare/echo su stabilita'. Signal
+  interno `0.5427 -> 0.5213`, ancora `medium`.
+- SSL1P1: `3 -> 0`; tutti i candidati rimossi erano implicit cue senza `?` con
+  sentence/merge debole, gia' valutati dalla review come falsi positivi o solo
+  parziali. Questo e' un tradeoff esplicito precisione > yield.
+- Stanford: `18 -> 15`; rimossi tre candidati implicit/declarative cue indicati
+  dalla review come deboli. Signal interno `0.8710 -> 0.8540`, ancora `high`.
+
+Decisione:
+
+- Localmente il micro-ciclo sembra coerente con la review esterna: sacrifica
+  yield dove la qualita' era bassa o ambigua e conserva i casi forti.
+- Serve nuova AI review esterna mirata per confermare che il taglio di SSL1P1 a
+  zero candidati sia accettabile e che Stanford/Eugenia non perdano valore
+  didattico significativo.

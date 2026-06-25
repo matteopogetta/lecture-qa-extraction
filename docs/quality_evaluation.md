@@ -175,6 +175,12 @@ support for the question. It is intentionally not a standalone hard filter:
 low lexical overlap can still be valid for contextual follow-ups and natural
 explanatory answers.
 
+Question-autonomy and echo diagnostics are also exported as compact risk
+reasons. `low_autonomy_implicit_question` marks implicit cue questions without a
+question mark when sentence/merge metadata suggests the cue was extracted from a
+weak fragment or run-on. `circular_answer_echo` marks answers that cover most of
+the question while adding too little new information.
+
 Example:
 
 ```bash
