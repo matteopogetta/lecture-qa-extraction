@@ -2247,6 +2247,18 @@ class QAPairExtractor:
         score += qa_alignment["relevance_score"]
         reason_codes.extend(qa_alignment["reason_codes"])
 
+        answer_responsiveness = self._score_answer_responsiveness(
+            question=question,
+            answer=answer,
+            qa_alignment=qa_alignment,
+            answer_matches=answer_matches,
+        )
+        partial_scores["answer_responsiveness"] = float(
+            answer_responsiveness["score_delta"],
+        )
+        score += answer_responsiveness["score_delta"]
+        reason_codes.extend(answer_responsiveness["reason_codes"])
+
         span_support = self._score_answer_span_completeness(
             question=question,
             answer=answer,
@@ -2364,6 +2376,9 @@ class QAPairExtractor:
         answer.metadata["segment_relation"] = segment_relation
         answer.metadata["answer_is_question"] = answer_is_question
         answer.metadata["qa_alignment_debug"] = qa_alignment["debug"]
+        answer.metadata["answer_responsiveness_debug"] = answer_responsiveness[
+            "debug"
+        ]
         answer.metadata["answer_span_completeness_debug"] = span_support["debug"]
         answer.metadata["answer_context_debug"] = answer_context["debug"]
         answer.metadata["answer_quality_gate_debug"] = quality_gate["debug"]
@@ -2384,6 +2399,104 @@ class QAPairExtractor:
             "search_candidate_count": search_result.metadata.get("candidate_count", 0),
         }
         return answer
+
+    def _score_answer_responsiveness(
+        self,
+        *,
+        question: QuestionCandidate,
+        answer: _AnswerCandidate,
+        qa_alignment: dict[str, Any],
+        answer_matches: Sequence[Any],
+    ) -> dict[str, Any]:
+        """Return a compact signal for whether the answer responds to the question."""
+
+        normalized_question = normalize_rule_text(question.question_text)
+        normalized_answer = normalize_rule_text(answer.answer_text)
+        question_tokens = self._content_tokens(normalized_question)
+        answer_tokens = self._content_tokens(normalized_answer)
+        answer_only_tokens = answer_tokens - question_tokens
+        shared_keywords = set(qa_alignment.get("shared_keywords") or [])
+        shared_numbers = set(qa_alignment.get("shared_numbers") or [])
+        answer_numbers = self._number_tokens(normalized_answer)
+        asks_for_quantity = self._question_has_quantity_intent(
+            question.question_text,
+            question.question_type,
+        )
+        has_topical_anchor = bool(shared_keywords or shared_numbers)
+        has_quantity_support = bool(
+            shared_numbers or (asks_for_quantity and answer_numbers),
+        )
+        answer_cue_score = min(0.30, sum(match.weight for match in answer_matches))
+
+        score_delta = 0.0
+        reason_codes: list[str] = []
+        if has_topical_anchor:
+            score_delta += 0.07
+            reason_codes.append("answer_responsiveness_anchor")
+        if has_quantity_support:
+            score_delta += 0.08
+            reason_codes.append("answer_responsiveness_quantity_support")
+
+        answer_only_count = len(answer_only_tokens)
+        if answer_only_count >= 3:
+            score_delta += 0.04
+            reason_codes.append("answer_responsiveness_added_substance")
+        elif answer_only_count <= 1 and not has_quantity_support:
+            score_delta -= 0.10
+            reason_codes.append("answer_responsiveness_low_substance")
+
+        contextual_question = bool(
+            self._is_contextual_question(question.question_text)
+            or "question_context_expanded" in question.reason_codes
+        )
+        if not has_topical_anchor and not has_quantity_support:
+            if answer_cue_score > 0.0:
+                score_delta -= 0.08
+                reason_codes.append("answer_responsiveness_surface_cue")
+            elif contextual_question:
+                score_delta -= 0.04
+                reason_codes.append("answer_responsiveness_contextual_question")
+            else:
+                score_delta -= 0.14
+                reason_codes.append("answer_responsiveness_missing_anchor")
+
+        if asks_for_quantity and not answer_numbers:
+            score_delta -= 0.12
+            reason_codes.append("answer_responsiveness_quantity_missing")
+
+        if question.question_type in {"why", "didactic_prompt"}:
+            if answer_cue_score <= 0.0 and answer_only_count < 4:
+                score_delta -= 0.05
+                reason_codes.append("answer_responsiveness_explanation_weak")
+            elif answer_cue_score > 0.0 and (
+                has_topical_anchor or answer_only_count >= 3
+            ):
+                score_delta += 0.03
+                reason_codes.append("answer_responsiveness_explanation_support")
+
+        if self._is_answer_question_like(answer.answer_text):
+            score_delta -= 0.12
+            reason_codes.append("answer_responsiveness_answer_is_question")
+
+        score_delta = max(-0.24, min(0.06, score_delta))
+        responsiveness_score = self._clamp(0.55 + (score_delta * 1.6))
+        if score_delta <= -0.10:
+            reason_codes.append("answer_responsiveness_weak")
+        elif score_delta >= 0.05:
+            reason_codes.append("answer_responsiveness_strong")
+
+        return {
+            "score_delta": round(score_delta, 4),
+            "reason_codes": self._unique_strings(reason_codes),
+            "debug": {
+                "score": round(responsiveness_score, 4),
+                "score_delta": round(score_delta, 4),
+                "has_topical_anchor": has_topical_anchor,
+                "has_quantity_support": has_quantity_support,
+                "answer_only_token_count": answer_only_count,
+                "answer_cue_score": round(answer_cue_score, 4),
+            },
+        }
 
     def _score_answer_context(
         self,
@@ -3411,6 +3524,8 @@ class QAPairExtractor:
             flags.append("surface_answer_cue")
         if "deferred_answer_too_broad_penalty" in reason_codes:
             flags.append("deferred_answer_too_broad")
+        if "answer_responsiveness_weak" in reason_codes:
+            flags.append("weak_answer_responsiveness")
         if "question_intent_poll_or_check" in reason_codes:
             flags.append("poll_or_check_question")
         if "question_intent_rhetorical_tag" in reason_codes:
@@ -3448,6 +3563,7 @@ class QAPairExtractor:
             + 0.30 * float(question.didactic_question_score or 0.0),
         )
         answer_quality_score = self._clamp(float(answer.answer_score))
+        answer_responsiveness_score = self._answer_responsiveness_feature_score(answer)
         context_quality_score = self._context_quality_feature_score(context_extraction)
         grounding_quality_score = self._grounding_quality_feature_score(
             question=question,
@@ -3478,6 +3594,7 @@ class QAPairExtractor:
             "schema_version": "1.0",
             "question_quality_score": round(question_quality_score, 4),
             "answer_quality_score": round(answer_quality_score, 4),
+            "answer_responsiveness_score": round(answer_responsiveness_score, 4),
             "context_quality_score": round(context_quality_score, 4),
             "grounding_quality_score": round(grounding_quality_score, 4),
             "risk_score": round(risk_score, 4),
@@ -3486,6 +3603,18 @@ class QAPairExtractor:
             "risk_band": self._risk_band(risk_score),
             "risk_reasons": risk_reasons,
         }
+
+    @staticmethod
+    def _answer_responsiveness_feature_score(answer: _AnswerCandidate) -> float:
+        """Return the compact answer responsiveness score when available."""
+
+        responsiveness_debug = answer.metadata.get("answer_responsiveness_debug")
+        if not isinstance(responsiveness_debug, dict):
+            return 0.55
+        score = responsiveness_debug.get("score")
+        if isinstance(score, int | float):
+            return max(0.0, min(1.0, float(score)))
+        return 0.55
 
     @staticmethod
     def _context_quality_feature_score(
@@ -3572,6 +3701,7 @@ class QAPairExtractor:
             "low_information_answer": 0.20,
             "incomplete_answer_span": 0.14,
             "surface_answer_cue": 0.22,
+            "weak_answer_responsiveness": 0.22,
             "deferred_answer_too_broad": 0.20,
             "quality_local_deferred": 0.14,
             "competing_question": 0.08,
@@ -3586,6 +3716,7 @@ class QAPairExtractor:
             "moderator_handoff_answer_penalty": "moderator_handoff_answer",
             "incomplete_answer_span_penalty": "incomplete_answer_span",
             "surface_answer_cue_penalty": "surface_answer_cue",
+            "answer_responsiveness_weak": "weak_answer_responsiveness",
             "deferred_long_temporal_gap": "deferred_long_gap",
             "distant_segment_penalty": "distant_segment",
         }

@@ -67,6 +67,12 @@ class EvaluationRunExporterTests(unittest.TestCase):
                 0.82,
             )
             self.assertEqual(
+                metrics["qa_quality_metrics"]["answer_responsiveness_score"][
+                    "median"
+                ],
+                0.77,
+            )
+            self.assertEqual(
                 metrics["qa_quality_metrics"]["quality_band_counts"]["high"],
                 1,
             )
@@ -191,6 +197,7 @@ class EvaluationRunExporterTests(unittest.TestCase):
                             "schema_version": "1.0",
                             "question_quality_score": 0.86,
                             "answer_quality_score": 0.84,
+                            "answer_responsiveness_score": 0.77,
                             "context_quality_score": 0.75,
                             "grounding_quality_score": 0.90,
                             "risk_score": 0.12,

@@ -1747,3 +1747,96 @@ Decisione:
 - Chiudere il micro-ciclo QA extractor e procedere a commit, oppure passare al
   prossimo miglioramento strutturale: answer-responsiveness indipendente da
   frasi specifiche.
+
+## 2026-06-25 - Answer responsiveness diagnostico v1
+
+Obiettivo:
+
+- Aggiungere un segnale locale e deterministico che misuri se la risposta
+  selezionata risponde davvero alla domanda, senza introdurre regole su frasi o
+  casi specifici osservati nelle run.
+- Rendere il segnale utile per ranking, risk e confronto run, ma non usarlo
+  subito come filtro rigido finche' non e' tarato su tutto il set.
+
+Implementazione:
+
+- Aggiunto helper interno `_score_answer_responsiveness` nel QA extractor.
+- Input usati: domanda, risposta, allineamento lessicale/numerico gia'
+  calcolato, cue risposta gia' raccolti.
+- Output: `answer_responsiveness` come partial score, debug compatto in
+  `answer_responsiveness_debug`, reason code sintetici.
+- Aggiunto `answer_responsiveness_score` dentro
+  `QAPairCandidate.metadata["quality_features"]`.
+- Aggiunta distribuzione aggregata `answer_responsiveness_score` in
+  `metrics.json` sotto `qa_quality_metrics`.
+
+Regole e parametri iniziali:
+
+- Supporto topicale o numerico: piccolo bonus (`+0.07` / `+0.08`).
+- Sostanza aggiunta rispetto alla domanda: piccolo bonus (`+0.04`) se la
+  risposta aggiunge almeno tre token informativi.
+- Mancanza di aggancio domanda-risposta: penalita' moderata (`-0.14`) se non ci
+  sono overlap/cifre/cue utili.
+- Domande contestuali o espanse da contesto: penalita' piu' leggera (`-0.04`),
+  per non eliminare risposte naturali tipo conferma/smentita con precisazione.
+- Domande quantitative senza numero in risposta: penalita' (`-0.12`).
+- Risposte che sono ancora domande: penalita' (`-0.12`).
+- Il delta e' limitato a `[-0.24, +0.06]`: dopo una prima run locale, il bonus
+  positivo `+0.16` risultava troppo generoso e faceva emergere un falso
+  positivo su una domanda frammentaria. La versione finale del micro-ciclo
+  mantiene quindi la penalita' informativa ma rende il bonus solo conservativo.
+
+Decisione architetturale:
+
+- `answer_responsiveness` non e' un nuovo ramo della pipeline.
+- Non aggiunge file nuovi.
+- Non copia debug estesi in `metrics.json`.
+- Non diventa per ora un gate duro in `quality_local`, perche' una bassa
+  sovrapposizione lessicale puo' essere corretta in follow-up contestuali e in
+  risposte esplicative naturali.
+
+Test aggiunti:
+
+- Verifica che `quality_features` contenga il nuovo score compatto.
+- Verifica che una risposta astratta con aggancio topicale e sostanza abbia
+  responsiveness maggiore di una risposta astratta non ancorata.
+- Verifica aggregazione dello score in `metrics.json`.
+
+Verifiche locali:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python -m unittest tests.test_qa_extractor tests.test_evaluation_run_exporter
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python -m unittest discover -s tests
+python scripts/run_evaluation_batch.py --resume --profiles quality_local --segmentation-mode structural
+```
+
+Risultato test:
+
+- Test mirati QA/export: `57` OK.
+- Suite completa: `166` OK.
+
+Run locale finale:
+
+- Output batch:
+  `/Users/matteopogetta/Documents/ExerPlazaSample/output/evaluation_batch_2026-06-25_202344`
+
+Confronto interno contro baseline pulita `2026-06-25_1428xx`:
+
+- Deep Time: candidati `4 -> 4`, run quality signal `0.5433 -> 0.5762`.
+- Eugenia: candidati `31 -> 30`, run quality signal `0.8209 -> 0.8359`.
+- L25P08: candidati `3 -> 3`, invariato.
+- L25P09: candidati `5 -> 5`, invariato.
+- SSL1P1: candidati `3 -> 3`, run quality signal `0.5540 -> 0.5643`.
+- Stanford: candidati `18 -> 18`, run quality signal `0.8677 -> 0.8710`.
+
+Nota sulla run intermedia:
+
+- Una versione con bonus massimo `+0.16` aveva prodotto un candidato aggiuntivo
+  su SSL1P1; e' stata scartata perche' aumentava il recall di falsi positivi.
+
+Decisione:
+
+- Il micro-ciclo e' localmente stabile.
+- Serve valutazione esterna AI mirata sulla run finale per confermare che la
+  rimozione di un candidato su Eugenia sia positiva e che i miglioramenti
+  interni non nascondano regressioni qualitative.

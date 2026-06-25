@@ -168,6 +168,13 @@ candidate needs inspection.
 indicator derived from aggregate quality distribution, useful yield, and risk.
 It is not used to filter or rank candidates.
 
+`answer_responsiveness_score` is a compact local diagnostic inside
+`quality_features` and an aggregate distribution inside `qa_quality_metrics`.
+It measures whether the selected answer has topical, numeric, or substantive
+support for the question. It is intentionally not a standalone hard filter:
+low lexical overlap can still be valid for contextual follow-ups and natural
+explanatory answers.
+
 Example:
 
 ```bash

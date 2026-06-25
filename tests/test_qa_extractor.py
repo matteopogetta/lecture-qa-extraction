@@ -772,11 +772,61 @@ class QAPairExtractorTests(unittest.TestCase):
         self.assertNotIn("answer_debug", good_features)
         self.assertNotIn("context_debug", good_features)
         self.assertNotIn("confidence_debug", good_features)
+        self.assertIn("answer_responsiveness_score", good_features)
         self.assertGreater(
             good_features["final_quality_score"],
             echo_features["final_quality_score"],
         )
         self.assertIn("same_sentence_echo", echo_features["risk_reasons"])
+
+    def test_answer_responsiveness_prefers_anchored_substantive_answers(self) -> None:
+        """The answer score should prefer topical substance over unrelated text."""
+
+        anchored_session = self._build_session(
+            texts=[
+                "Why does alpha change?",
+                "Alpha changes because beta adds unit support.",
+            ],
+            segment_text_indexes=[[0, 1]],
+        )
+        unrelated_session = self._build_session(
+            texts=[
+                "Why does alpha change?",
+                "Gamma now moves through beta.",
+            ],
+            segment_text_indexes=[[0, 1]],
+        )
+
+        anchored_candidate = self._build_extractor(
+            qa_answer_search_strategy="local_rule_based",
+            qa_answer_ranking_strategy="rule_based",
+            min_qa_confidence=0.0,
+        ).extract(anchored_session)[0]
+        unrelated_candidate = self._build_extractor(
+            qa_answer_search_strategy="local_rule_based",
+            qa_answer_ranking_strategy="rule_based",
+            min_qa_confidence=0.0,
+        ).extract(unrelated_session)[0]
+
+        anchored_partial_scores = anchored_candidate.metadata["answer_debug"][
+            "partial_scores"
+        ]
+        unrelated_partial_scores = unrelated_candidate.metadata["answer_debug"][
+            "partial_scores"
+        ]
+        self.assertGreater(
+            anchored_partial_scores["answer_responsiveness"],
+            unrelated_partial_scores["answer_responsiveness"],
+        )
+        self.assertGreater(
+            anchored_candidate.metadata["quality_features"][
+                "answer_responsiveness_score"
+            ],
+            unrelated_candidate.metadata["quality_features"][
+                "answer_responsiveness_score"
+            ],
+        )
+        self.assertIn("weak_answer_responsiveness", unrelated_candidate.review_flags)
 
     def test_quality_features_penalize_surface_logistics_pairs(self) -> None:
         """Surface answer cues should not hide weak question-answer evidence."""

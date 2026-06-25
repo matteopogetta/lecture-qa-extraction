@@ -330,6 +330,14 @@ def _qa_quality_metrics(qa_candidates: list[dict[str, Any]]) -> dict[str, Any]:
         )
         if score is not None
     ]
+    answer_responsiveness_scores = [
+        score
+        for score in (
+            _safe_float(features.get("answer_responsiveness_score"))
+            for features in quality_features
+        )
+        if score is not None
+    ]
     quality_band_counts = _count_string_values(
         features.get("quality_band") for features in quality_features
     )
@@ -352,6 +360,9 @@ def _qa_quality_metrics(qa_candidates: list[dict[str, Any]]) -> dict[str, Any]:
         "missing_candidate_count": max(0, len(qa_candidates) - len(quality_features)),
         "final_quality_score": final_score_distribution,
         "risk_score": risk_score_distribution,
+        "answer_responsiveness_score": _score_distribution(
+            answer_responsiveness_scores,
+        ),
         "quality_band_counts": {
             "high": quality_band_counts.get("high", 0),
             "medium": quality_band_counts.get("medium", 0),
