@@ -1964,3 +1964,45 @@ Decisione:
 - Serve nuova AI review esterna mirata per confermare che il taglio di SSL1P1 a
   zero candidati sia accettabile e che Stanford/Eugenia non perdano valore
   didattico significativo.
+
+## 2026-06-25 - Valutazione esterna AI su question autonomy v1
+
+Input valutato:
+
+- Run `quality_local structural`:
+  `/Users/matteopogetta/Documents/ExerPlazaSample/output/evaluation_batch_2026-06-25_204454`
+- Cartelle evaluation `2026-06-25_2044xx_quality_local_structural`.
+
+Risultati esterni:
+
+- Deep Time: quality score `2`, runtime value `2`. Nessun miglioramento
+  sostanziale sul caso panel/monologo: senza diarizzazione o speaker-turn il
+  profilo locale continua a prendere auto-continuazioni dello stesso speaker.
+- Eugenia: quality score `3`, runtime value `3`. Il profilo resta utile su
+  contenuto dialogico, ma alcuni errori residui dipendono ancora da assenza di
+  speaker-turn e da risposte poco responsive.
+- L25P08: quality score `3`, runtime value `4`. Restano falsi positivi da
+  frammenti dichiarativi e risposte meta/eco; buona velocita' warm, ma da non
+  conteggiare come cold runtime.
+- L25P09: quality score `3`, runtime value `4`. Il taglio dell'echo circolare e
+  dei deferred/distant e' stato valutato positivamente; il matching locale e'
+  utile per lezioni single-speaker con frasi abbastanza pulite. Problemi residui
+  vengono da ASR, sentence split e risposte troncate.
+- SSL1P1: quality score `1`, runtime value `2`. Il taglio a zero candidati e'
+  una regressione di recall: il transcript contiene materiale didattico utile,
+  ma la nuova guardia e/o il matcher locale non riesce a estrarlo.
+- Stanford: quality score `3`, runtime value `4`. Il profilo resta solido per
+  no-model/local matching, ma ha perso un po' di valore rispetto alla run
+  precedente; restano errori su domande retoriche/embedded, risposte off-target
+  e context debole.
+
+Decisione:
+
+- `question_autonomy_and_continuation_v1` non e' da irrigidire ulteriormente.
+- Il guardrail e' positivo su L25P09 e su alcuni falsi positivi Stanford, ma
+  troppo aggressivo per SSL1P1.
+- Non aggiungere altre regole nel QA extractor prima di migliorare l'input
+  fraseologico.
+- Prossimo ciclo consigliato: modulo conservativo di sentence/semantic cleanup
+  prima di segmentation e QA extraction, con output tracciabile e metadata come
+  autonomia frase, run-on/fragment, boundary confidence e question likelihood.
