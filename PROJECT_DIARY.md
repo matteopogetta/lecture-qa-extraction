@@ -2006,3 +2006,101 @@ Decisione:
 - Prossimo ciclo consigliato: modulo conservativo di sentence/semantic cleanup
   prima di segmentation e QA extraction, con output tracciabile e metadata come
   autonomia frase, run-on/fragment, boundary confidence e question likelihood.
+
+## 2026-06-26 - Sentence semantic cleanup diagnostics v1
+
+Obiettivo:
+
+- Iniziare la sistemazione semantica/fraseologica senza riscrivere liberamente
+  il transcript e senza creare un secondo testo parallelo.
+- Portare al QA extractor segnali sentence-level piu' ordinati, cosi' le regole
+  successive lavorano su metadata strutturali e non su frasi/casi specifici.
+
+Implementazione:
+
+- Aggiunto `metadata["semantic_cleanup"]` alle reconstructed sentences durante
+  il consolidamento sentence, anche quando le sentence vengono caricate da
+  artifact/cache e riconsolidate.
+- Campi compatti:
+  - `sentence_autonomy_score`;
+  - `boundary_confidence_score`;
+  - `continuation_risk_score`;
+  - `has_strong_final_punctuation`.
+- Aggiunti flag sentence-level quando i punteggi sono bassi:
+  - `low_sentence_autonomy`;
+  - `low_boundary_confidence`.
+- Il QA extractor legge `semantic_cleanup` e applica penalita' leggere:
+  - `question_low_sentence_autonomy`;
+  - `question_borderline_sentence_autonomy`;
+  - `question_low_boundary_confidence`;
+  - `question_continuation_risk`.
+- Questi reason code alimentano anche il guardrail gia' esistente
+  `low_autonomy_implicit_question`, ma non introducono un nuovo ramo pipeline.
+
+Parametri iniziali:
+
+- I punteggi partono da valori conservativi (`0.76-0.78`) e vengono ridotti da
+  segnali gia' esistenti: fragment/run-on, marker incompleti, mancanza di
+  punteggiatura forte, molte clausole interne.
+- Penalita' QA leggere: `-0.08` per autonomia bassa, `-0.03` per autonomia
+  borderline, `-0.06` per boundary bassa, `-0.04` per continuation risk alto.
+
+Test:
+
+- Aggiunto test su `SentenceReconstructor` che verifica metadata compact,
+  autonomia bassa e boundary bassa su un frammento astratto.
+- Test mirati eseguiti:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python -m unittest tests.test_sentence_reconstruction tests.test_qa_extractor
+```
+
+Risultato:
+
+- `74` OK.
+
+Decisione:
+
+- Questo e' cleanup diagnostico v1: non modifica il testo e non cambia ancora
+  la sentence splitting strategy.
+- Prossima verifica: suite completa e run locale `quality_local` per misurare
+  se i nuovi metadata cambiano il filtering dei candidati con cache warm.
+
+Verifica completa:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python -m unittest discover -s tests
+python scripts/run_evaluation_batch.py --resume --profiles quality_local --segmentation-mode structural
+```
+
+Risultato test:
+
+- Suite completa: `169` OK.
+
+Run locale:
+
+- Output batch:
+  `/Users/matteopogetta/Documents/ExerPlazaSample/output/evaluation_batch_2026-06-26_020259`
+
+Confronto contro `question_autonomy_v1` (`2026-06-25_2044xx`):
+
+- Deep Time: `4 -> 3`; rimosso un candidato weak/competing question gia'
+  valutato debole. Signal interno `0.5762 -> 0.5402`.
+- Eugenia: `26 -> 23`; rimossi tre candidati embedded/weak-form. Signal interno
+  `0.8069 -> 0.8279`, ancora `high`.
+- L25P08: `3 -> 3`, invariato.
+- L25P09: `4 -> 4`, invariato.
+- SSL1P1: `0 -> 0`, invariato. Il cleanup diagnostico non recupera recall.
+- Stanford: `15 -> 14`; rimosso un candidato embedded/competing debole. Signal
+  interno `0.8540 -> 0.8631`, ancora `high`.
+
+Decisione aggiornata:
+
+- Il cleanup diagnostico v1 e' coerente: migliora filtering/score sui casi
+  dialogici senza nuovi modelli e senza riscrivere il testo.
+- Non risolve SSL1P1, perche' il problema li' sembra recall/generazione di Q/A
+  didattiche da contenuto dichiarativo, non solo boundary/punteggiatura.
+- Prossimo passo tecnico, prima di AI review esterna: progettare un v2 che
+  modifichi effettivamente boundary/splitting in modo conservativo oppure un
+  modulo separato di didactic-QA-from-statements, da tenere distinto dalla
+  raccolta di Q/A reali.

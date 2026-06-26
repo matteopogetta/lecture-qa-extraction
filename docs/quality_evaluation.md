@@ -181,6 +181,12 @@ question mark when sentence/merge metadata suggests the cue was extracted from a
 weak fragment or run-on. `circular_answer_echo` marks answers that cover most of
 the question while adding too little new information.
 
+Sentence-level cleanup diagnostics are conservative metadata, not transcript
+rewrites. Reconstructed sentences may expose `metadata.semantic_cleanup` with
+`sentence_autonomy_score`, `boundary_confidence_score`, and
+`continuation_risk_score`. QA extraction can use these scores as light evidence
+when deciding whether a sentence is autonomous enough to seed a question.
+
 Example:
 
 ```bash

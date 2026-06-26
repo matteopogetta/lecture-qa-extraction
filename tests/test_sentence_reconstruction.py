@@ -206,6 +206,39 @@ class SentenceReconstructionTests(unittest.TestCase):
                 2,
             )
 
+    def test_consolidation_adds_semantic_cleanup_features(self) -> None:
+        """Sentence cleanup diagnostics should be compact and review-visible."""
+
+        with tempfile.TemporaryDirectory() as temp_directory:
+            media_path = Path(temp_directory) / "lesson.wav"
+            media_path.write_bytes(b"placeholder")
+
+            config = PipelineConfig(
+                working_directory=Path(temp_directory) / "artifacts",
+            )
+            reconstructor = SentenceReconstructor(config, splitter=_FakeSplitter({}))
+            audio_source = self._build_audio_source(media_path)
+            utterances = [
+                self._build_utterance(
+                    audio_source_id=audio_source.audio_source_id,
+                    utterance_index=1,
+                    text="because alpha",
+                    start_seconds=0.0,
+                    end_seconds=0.5,
+                    speaker_id="SPEAKER_00",
+                ),
+            ]
+
+            sentence_collection = reconstructor.build_source(audio_source, utterances)
+            sentence = sentence_collection.sentences[0]
+            cleanup = sentence.metadata["semantic_cleanup"]
+
+            self.assertEqual(cleanup["schema_version"], "1.0")
+            self.assertLess(cleanup["sentence_autonomy_score"], 0.45)
+            self.assertLess(cleanup["boundary_confidence_score"], 0.45)
+            self.assertIn("low_sentence_autonomy", sentence.sentence_review_flags)
+            self.assertIn("low_boundary_confidence", sentence.sentence_review_flags)
+
     def test_consolidation_marks_unassigned_and_uncertain_sources(self) -> None:
         """Sentence consolidation should distinguish uncertain and unassigned evidence."""
 

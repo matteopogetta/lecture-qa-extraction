@@ -555,6 +555,13 @@ class SentenceReconstructor:
             fragment_signals=fragment_signals,
             run_on_signals=run_on_signals,
         )
+        semantic_cleanup = self._sentence_semantic_cleanup_features(
+            text=text,
+            word_count=word_count,
+            fragment_signals=fragment_signals,
+            run_on_signals=run_on_signals,
+            semantic_quality_label=semantic_quality_label,
+        )
         sentence.semantic_quality_label = semantic_quality_label
         sentence.length_bucket = self._length_bucket(word_count)
         sentence.duration_bucket = self._duration_bucket(duration_seconds)
@@ -584,6 +591,7 @@ class SentenceReconstructor:
         )
         metadata["semantic_fragment_signals"] = fragment_signals
         metadata["semantic_run_on_signals"] = run_on_signals
+        metadata["semantic_cleanup"] = semantic_cleanup
         sentence.metadata = metadata
         self._apply_sentence_speaker_decision(
             sentence=sentence,
@@ -1238,6 +1246,20 @@ class SentenceReconstructor:
             has_speaker_change_inside=has_speaker_change_inside,
             is_multi_utterance=is_multi_utterance,
         )
+        semantic_cleanup = metadata.get("semantic_cleanup")
+        if isinstance(semantic_cleanup, dict):
+            autonomy_score = _safe_float(
+                semantic_cleanup.get("sentence_autonomy_score"),
+                fallback=1.0,
+            )
+            boundary_score = _safe_float(
+                semantic_cleanup.get("boundary_confidence_score"),
+                fallback=1.0,
+            )
+            if autonomy_score < 0.45:
+                sentence.sentence_review_flags.append("low_sentence_autonomy")
+            if boundary_score < 0.45:
+                sentence.sentence_review_flags.append("low_boundary_confidence")
         sentence.review_priority = self._review_priority(
             speaker_resolution_status=str(sentence.speaker_resolution_status or ""),
             semantic_quality_label=semantic_quality_label,
@@ -2187,6 +2209,67 @@ class SentenceReconstructor:
         if weak_boundary_count >= 2:
             signals.append("multiple_internal_clauses")
         return signals
+
+    def _sentence_semantic_cleanup_features(
+        self,
+        *,
+        text: str,
+        word_count: int,
+        fragment_signals: Sequence[str],
+        run_on_signals: Sequence[str],
+        semantic_quality_label: str,
+    ) -> dict[str, Any]:
+        """Return compact diagnostics for conservative sentence cleanup."""
+
+        fragment_set = set(fragment_signals)
+        run_on_set = set(run_on_signals)
+        has_strong_final_punctuation = text.strip().endswith(
+            self._STRONG_ENDING_PUNCTUATION,
+        )
+        sentence_autonomy_score = 0.78
+        boundary_confidence_score = 0.76
+        continuation_risk_score = 0.08
+
+        if semantic_quality_label == "fragment":
+            sentence_autonomy_score -= 0.34
+            boundary_confidence_score -= 0.18
+            continuation_risk_score += 0.24
+        elif semantic_quality_label == "run_on":
+            sentence_autonomy_score -= 0.22
+            boundary_confidence_score -= 0.24
+            continuation_risk_score += 0.20
+        elif semantic_quality_label == "borderline":
+            sentence_autonomy_score -= 0.12
+            boundary_confidence_score -= 0.10
+            continuation_risk_score += 0.10
+
+        if "starts_with_incomplete_marker" in fragment_set:
+            sentence_autonomy_score -= 0.14
+            continuation_risk_score += 0.16
+        if "ends_with_incomplete_marker" in fragment_set:
+            boundary_confidence_score -= 0.18
+            continuation_risk_score += 0.14
+        if "missing_strong_final_punctuation" in fragment_set:
+            boundary_confidence_score -= 0.16
+            continuation_risk_score += 0.08
+        if "multiple_internal_clauses" in run_on_set:
+            boundary_confidence_score -= 0.10
+            continuation_risk_score += 0.08
+        if has_strong_final_punctuation:
+            boundary_confidence_score += 0.08
+        if 4 <= word_count <= 23:
+            sentence_autonomy_score += 0.06
+
+        sentence_autonomy_score = max(0.0, min(1.0, sentence_autonomy_score))
+        boundary_confidence_score = max(0.0, min(1.0, boundary_confidence_score))
+        continuation_risk_score = max(0.0, min(1.0, continuation_risk_score))
+        return {
+            "schema_version": "1.0",
+            "sentence_autonomy_score": round(sentence_autonomy_score, 4),
+            "boundary_confidence_score": round(boundary_confidence_score, 4),
+            "continuation_risk_score": round(continuation_risk_score, 4),
+            "has_strong_final_punctuation": has_strong_final_punctuation,
+        }
 
     def _semantic_quality_label(
         self,

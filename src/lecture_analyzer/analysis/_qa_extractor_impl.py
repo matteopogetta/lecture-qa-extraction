@@ -1831,6 +1831,9 @@ class QAPairExtractor:
             "question_sentence_quality_penalty",
             "question_sentence_quality_borderline",
             "question_merge_safety_penalty",
+            "question_low_sentence_autonomy",
+            "question_low_boundary_confidence",
+            "question_continuation_risk",
             "intra_sentence_qa",
         }
         return bool(reason_set & weak_structure_reasons)
@@ -2012,6 +2015,30 @@ class QAPairExtractor:
         elif unit.review_priority == "high":
             score_delta -= 0.04
             reason_codes.append("question_review_priority_high")
+
+        semantic_cleanup = unit.metadata.get("semantic_cleanup")
+        if isinstance(semantic_cleanup, dict):
+            autonomy_score = self._safe_float(
+                semantic_cleanup.get("sentence_autonomy_score"),
+            )
+            boundary_score = self._safe_float(
+                semantic_cleanup.get("boundary_confidence_score"),
+            )
+            continuation_risk = self._safe_float(
+                semantic_cleanup.get("continuation_risk_score"),
+            )
+            if autonomy_score is not None and autonomy_score < 0.45:
+                score_delta -= 0.08
+                reason_codes.append("question_low_sentence_autonomy")
+            elif autonomy_score is not None and autonomy_score < 0.60:
+                score_delta -= 0.03
+                reason_codes.append("question_borderline_sentence_autonomy")
+            if boundary_score is not None and boundary_score < 0.45:
+                score_delta -= 0.06
+                reason_codes.append("question_low_boundary_confidence")
+            if continuation_risk is not None and continuation_risk >= 0.42:
+                score_delta -= 0.04
+                reason_codes.append("question_continuation_risk")
 
         if unit.speaker_resolution_status in {"stable", "mostly_stable"}:
             score_delta += 0.02
@@ -3545,6 +3572,10 @@ class QAPairExtractor:
             flags.append("declarative_tag_question")
         if "low_autonomy_implicit_question" in reason_codes:
             flags.append("low_autonomy_implicit_question")
+        if "question_low_sentence_autonomy" in reason_codes:
+            flags.append("low_sentence_autonomy")
+        if "question_low_boundary_confidence" in reason_codes:
+            flags.append("low_boundary_confidence")
         if "answer_echoes_question_penalty" in reason_codes:
             flags.append("same_sentence_echo")
         if "answer_circular_echo_penalty" in reason_codes:
@@ -3735,6 +3766,8 @@ class QAPairExtractor:
             "weak_question_form": 0.22,
             "embedded_statement_question": 0.18,
             "low_autonomy_implicit_question": 0.24,
+            "low_sentence_autonomy": 0.16,
+            "low_boundary_confidence": 0.12,
             "same_sentence_echo": 0.24,
             "circular_answer_echo": 0.24,
             "same_sentence_without_answer_cue": 0.24,
@@ -3752,6 +3785,8 @@ class QAPairExtractor:
             "low_question_answer_relevance": "low_relevance",
             "answer_echoes_question_penalty": "same_sentence_echo",
             "answer_circular_echo_penalty": "circular_answer_echo",
+            "question_low_sentence_autonomy": "low_sentence_autonomy",
+            "question_low_boundary_confidence": "low_boundary_confidence",
             "answer_boilerplate_penalty": "answer_boilerplate",
             "same_sentence_without_answer_cue": "same_sentence_without_answer_cue",
             "premise_only_answer_penalty": "premise_only_answer",
