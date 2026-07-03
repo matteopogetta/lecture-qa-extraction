@@ -147,8 +147,10 @@ Note:
 - la diarization richiede `pyannote.audio` e puo richiedere un token Hugging
   Face
 - l'export Excel di debug richiede `openpyxl`
-- il sentence splitter preferito e `wtpsplit`; se non e disponibile la
-  pipeline usa un fallback conservativo a regole
+- il sentence splitter dei profili qualita' e `wtpsplit`; se e richiesto ma
+  non disponibile, la pipeline fallisce chiaramente invece di usare fallback
+  silenzioso. Il fallback a regole resta disponibile solo se scelto
+  esplicitamente come backend.
 
 ### Token Hugging Face Opzionale
 
@@ -244,7 +246,8 @@ senza diarization. Usa `--pipeline-profile quality_local` per misurare QA locale
 con guardrail senza il costo di semantic retrieval/reranking. I guardrail locali
 filtrano check-in di classe poco informativi, poll numerici, domande-frammento,
 risposte che sono ancora domande, echo same-sentence e deferred answer lontane
-con segnale debole.
+con segnale debole, frammenti con bassa autonomia, contesti troppo sottili,
+risposte poco responsive e rischi di same-speaker/self-continuation.
 
 Confronta le evaluation run salvate per uno stesso input:
 

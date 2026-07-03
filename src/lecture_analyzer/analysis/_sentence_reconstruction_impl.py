@@ -211,6 +211,12 @@ class SentenceReconstructor:
                     status="failed",
                     reason=str(error) or "sentence_reconstruction_failed",
                 )
+                if requested_backend == "wtpsplit":
+                    raise RuntimeError(
+                        "wtpsplit sentence reconstruction failed; install and "
+                        "configure wtpsplit or explicitly select "
+                        "sentence_splitter_backend='fallback_rules'."
+                    ) from error
                 continue
 
             if sentence_collection.metadata.get("splitter_backend") != "wtpsplit_sat":
@@ -1416,7 +1422,7 @@ class SentenceReconstructor:
         text: str,
         language_code: str | None,
     ) -> tuple[list[str], dict[str, Any]]:
-        """Split one text block using wtpsplit when available, otherwise fallback."""
+        """Split one text block with the configured backend."""
 
         normalized_text = text.strip()
         if not normalized_text:
@@ -1433,10 +1439,10 @@ class SentenceReconstructor:
 
         splitter = self._get_splitter()
         if splitter is None:
-            return self._fallback_split_text(normalized_text), {
-                "splitter_backend": "fallback_rules",
-                "fallback_reason": "wtpsplit_unavailable",
-            }
+            raise RuntimeError(
+                "wtpsplit sentence splitter is required but unavailable. "
+                "Install wtpsplit or explicitly select fallback_rules."
+            )
 
         try:
             split_texts = self._call_splitter(
@@ -1446,17 +1452,11 @@ class SentenceReconstructor:
             )
         except Exception as error:
             LOGGER.warning("wtpsplit sentence splitting failed: %s", error)
-            return self._fallback_split_text(normalized_text), {
-                "splitter_backend": "fallback_rules",
-                "fallback_reason": "wtpsplit_failed",
-            }
+            raise RuntimeError("wtpsplit sentence splitting failed") from error
 
         cleaned_sentences = self._clean_split_texts(split_texts, normalized_text)
         if not cleaned_sentences:
-            return self._fallback_split_text(normalized_text), {
-                "splitter_backend": "fallback_rules",
-                "fallback_reason": "wtpsplit_empty_result",
-            }
+            raise RuntimeError("wtpsplit returned no sentence boundaries")
 
         return cleaned_sentences, {
             "splitter_backend": "wtpsplit_sat",

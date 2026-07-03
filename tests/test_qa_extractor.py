@@ -225,6 +225,7 @@ class QAPairExtractorTests(unittest.TestCase):
 
         candidate = self._build_extractor(
             qa_answer_search_strategy="local_rule_based",
+            qa_answer_ranking_strategy="rule_based",
         ).extract(session)[0]
 
         self.assertIn("English system", candidate.question_text)
@@ -302,7 +303,12 @@ class QAPairExtractorTests(unittest.TestCase):
         extractor = self._build_extractor(max_answer_duration_seconds=5.0)
         candidates = extractor.extract(session)
 
-        self.assertEqual(candidates, [])
+        self.assertFalse(
+            any(
+                "marker alpha control" in (candidate.question_text or "")
+                for candidate in candidates
+            ),
+        )
 
     def test_supports_cross_segment_pairing_when_sentences_are_consecutive(self) -> None:
         """Imperfect segmentation should not block QA extraction by itself."""
@@ -374,7 +380,10 @@ class QAPairExtractorTests(unittest.TestCase):
             segment_text_indexes=[[0, 1]],
         )
 
-        candidate = self._build_extractor().extract(session)[0]
+        candidate = self._build_extractor(
+            qa_answer_search_strategy="local_rule_based",
+            qa_answer_ranking_strategy="rule_based",
+        ).extract(session)[0]
 
         self.assertEqual(
             candidate.metadata["pairing_debug"]["search_strategy"],
@@ -584,12 +593,166 @@ class QAPairExtractorTests(unittest.TestCase):
 
         candidate = self._build_extractor(
             qa_answer_search_strategy="local_rule_based",
+            qa_answer_ranking_strategy="rule_based",
         ).extract(session)[0]
 
         self.assertEqual(candidate.question_text, "Where's that from?")
         self.assertEqual(candidate.context_strategy, "local_topic_window")
         self.assertEqual(candidate.context_sentence_ids, ["sentence_0001"])
         self.assertIn("take an L", candidate.context_text or "")
+
+    def test_context_selection_prefers_informative_setup_over_filler(self) -> None:
+        """Nearby context should prefer substantive setup over thin transition text."""
+
+        session = self._build_session(
+            texts=[
+                "Let us pause briefly before the example.",
+                "Marker gamma is introduced as the threshold for stable states.",
+                "What does marker gamma control?",
+                "Marker gamma controls whether the state remains stable.",
+            ],
+            segment_text_indexes=[[0, 1, 2, 3]],
+        )
+
+        candidate = self._build_extractor(
+            qa_answer_search_strategy="local_rule_based",
+            qa_answer_ranking_strategy="rule_based",
+        ).extract(session)[0]
+
+        self.assertEqual(candidate.context_strategy, "local_topic_window")
+        self.assertIn("sentence_0002", candidate.context_sentence_ids)
+        self.assertNotIn("sentence_0001", candidate.context_sentence_ids)
+        context_debug = candidate.metadata["context_debug"]
+        self.assertGreater(context_debug["context_selection_score"], 0.0)
+        self.assertIn("question_topic_overlap", context_debug["context_reasons"])
+        self.assertGreaterEqual(context_debug["candidate_context_count"], 2)
+
+    def test_context_selection_avoids_competing_question_when_setup_exists(self) -> None:
+        """A nearby competing question should not displace a better setup unit."""
+
+        session = self._build_session(
+            texts=[
+                "Marker delta defines stable transitions for the example.",
+                "What about marker epsilon?",
+                "What does marker delta define?",
+                "Marker delta defines how transitions stay stable.",
+            ],
+            segment_text_indexes=[[0, 1, 2, 3]],
+        )
+
+        candidates = self._build_extractor(
+            qa_answer_search_strategy="local_rule_based",
+            qa_answer_ranking_strategy="rule_based",
+        ).extract(session)
+        candidate = next(
+            candidate
+            for candidate in candidates
+            if "marker delta define" in candidate.question_text.lower()
+        )
+
+        self.assertEqual(candidate.context_strategy, "local_topic_window")
+        self.assertIn("sentence_0001", candidate.context_sentence_ids)
+        self.assertNotIn("sentence_0002", candidate.context_sentence_ids)
+        context_debug = candidate.metadata["context_debug"]
+        self.assertGreaterEqual(context_debug["candidate_context_count"], 2)
+        self.assertNotIn("question_debug", context_debug)
+
+    def test_context_selection_drops_competing_question_without_setup(self) -> None:
+        """A nearby question should not be exported as context by itself."""
+
+        session = self._build_session(
+            texts=[
+                "What about marker epsilon?",
+                "What does marker delta define?",
+                "Marker delta defines stable transitions.",
+            ],
+            segment_text_indexes=[[0, 1, 2]],
+        )
+
+        candidates = self._build_extractor(
+            qa_answer_search_strategy="local_rule_based",
+            qa_answer_ranking_strategy="rule_based",
+        ).extract(session)
+        candidate = next(
+            candidate
+            for candidate in candidates
+            if "marker delta define" in candidate.question_text.lower()
+        )
+
+        self.assertNotIn("sentence_0001", candidate.context_sentence_ids)
+        self.assertNotIn("What about marker epsilon", candidate.context_text or "")
+
+    def test_context_selection_drops_duplicate_question_context(self) -> None:
+        """Context should not repeat the selected question as reviewer support."""
+
+        session = self._build_session(
+            texts=[
+                "What does marker theta measure?",
+                "What does marker theta measure?",
+                "Marker theta measures the scale of the update.",
+            ],
+            segment_text_indexes=[[0, 1, 2]],
+        )
+
+        candidates = self._build_extractor(
+            qa_answer_search_strategy="local_rule_based",
+            qa_answer_ranking_strategy="rule_based",
+        ).extract(session)
+        candidate = next(
+            candidate
+            for candidate in candidates
+            if candidate.answer_text.startswith("Marker theta")
+        )
+
+        self.assertNotIn("sentence_0001", candidate.context_sentence_ids)
+        self.assertNotEqual(candidate.context_text, candidate.question_text)
+
+    def test_context_selection_drops_thin_fragment_without_setup(self) -> None:
+        """A tiny fragment should not be used as context when it adds no setup."""
+
+        session = self._build_session(
+            texts=[
+                "These two.",
+                "What does marker kappa compare?",
+                "Marker kappa compares the two update scales.",
+            ],
+            segment_text_indexes=[[0, 1, 2]],
+        )
+
+        candidate = self._build_extractor(
+            qa_answer_search_strategy="local_rule_based",
+            qa_answer_ranking_strategy="rule_based",
+        ).extract(session)[0]
+
+        self.assertNotIn("sentence_0001", candidate.context_sentence_ids)
+        self.assertNotIn("These two", candidate.context_text or "")
+
+    def test_marks_preposition_ended_answer_as_incomplete(self) -> None:
+        """Answer spans ending on a preposition should stay completion-risky."""
+
+        extractor = self._build_extractor()
+
+        self.assertTrue(
+            extractor._looks_like_incomplete_answer_span(
+                "The parameter is moving toward",
+            ),
+        )
+        self.assertTrue(
+            extractor._looks_like_incomplete_answer_span(
+                "Il valore arriva al",
+            ),
+        )
+
+    def test_marks_comma_ended_answer_as_incomplete(self) -> None:
+        """Answer spans ending on a comma should prefer a continuation."""
+
+        extractor = self._build_extractor()
+
+        self.assertTrue(
+            extractor._looks_like_incomplete_answer_span(
+                "The explanation starts with the category,",
+            ),
+        )
 
     def test_uses_leading_answer_before_competing_followup_question(self) -> None:
         """A sentence can answer one question before asking a new follow-up."""
@@ -610,6 +773,7 @@ class QAPairExtractorTests(unittest.TestCase):
 
         candidates = self._build_extractor(
             qa_answer_search_strategy="local_rule_based",
+            qa_answer_ranking_strategy="rule_based",
         ).extract(session)
 
         contextual_candidate = next(
@@ -646,7 +810,12 @@ class QAPairExtractorTests(unittest.TestCase):
             qa_answer_search_strategy="local_rule_based",
         ).extract(session)
 
-        self.assertEqual(candidates, [])
+        self.assertFalse(
+            any(
+                "marker alpha control" in (candidate.question_text or "")
+                for candidate in candidates
+            ),
+        )
 
     def test_filters_low_information_rhetorical_checkin_questions(self) -> None:
         """Short classroom check-ins should not become didactic QA candidates."""
@@ -663,7 +832,12 @@ class QAPairExtractorTests(unittest.TestCase):
             qa_answer_search_strategy="local_rule_based",
         ).extract(session)
 
-        self.assertEqual(candidates, [])
+        self.assertFalse(
+            any(
+                "marker alpha control" in (candidate.question_text or "")
+                for candidate in candidates
+            ),
+        )
 
     def test_filters_numeric_poll_questions(self) -> None:
         """Classroom poll options should not become QA candidates."""
@@ -904,6 +1078,248 @@ class QAPairExtractorTests(unittest.TestCase):
         self.assertGreaterEqual(features["risk_score"], 0.30)
         self.assertNotEqual(features["quality_band"], "high")
 
+    def test_quality_features_mark_thin_context(self) -> None:
+        """Context that adds almost no information should be a quality risk."""
+
+        session = self._build_session(
+            texts=[
+                "These two.",
+                "What is marker alpha?",
+                "Marker alpha is the threshold for the stable region.",
+            ],
+            segment_text_indexes=[[0, 1, 2]],
+        )
+
+        candidate = self._build_extractor(
+            qa_answer_search_strategy="local_rule_based",
+            qa_answer_ranking_strategy="rule_based",
+            min_qa_confidence=0.0,
+        ).extract(session)[0]
+
+        self.assertIn("thin_context_risk", candidate.metadata["quality_features"]["risk_reasons"])
+
+    def test_quality_local_rejects_weak_responsiveness_with_thin_context(self) -> None:
+        """Weak local answers should not pass when context adds no support."""
+
+        session = self._build_session(
+            texts=[
+                "These two.",
+                "In this module, what about marker alpha?",
+                "Gamma rotates through a separate example.",
+            ],
+            segment_text_indexes=[[0, 1, 2]],
+        )
+
+        candidates = self._build_extractor(
+            pipeline_profile="quality_local",
+            qa_answer_search_strategy="local_rule_based",
+            qa_answer_ranking_strategy="rule_based",
+            min_qa_confidence=0.0,
+        ).extract(session)
+
+        self.assertEqual(candidates, [])
+
+    def test_quality_local_rejects_low_autonomy_weak_question(self) -> None:
+        """Weak embedded question fragments need enough autonomy to export."""
+
+        session = self._build_session(
+            texts=[
+                "In this module, what about marker alpha?",
+                "Marker alpha controls the threshold for the stable region.",
+            ],
+            segment_text_indexes=[[0, 1]],
+            semantic_quality_labels=["fragment", "good"],
+            merge_safety_labels=["risky", "safe"],
+        )
+
+        candidates = self._build_extractor(
+            pipeline_profile="quality_local",
+            qa_answer_search_strategy="local_rule_based",
+            qa_answer_ranking_strategy="rule_based",
+            min_qa_confidence=0.0,
+        ).extract(session)
+
+        self.assertEqual(candidates, [])
+
+    def test_quality_local_rejects_low_autonomy_with_weak_answer_anchor(self) -> None:
+        """Low-autonomy questions need more than a tiny lexical anchor."""
+
+        session = self._build_session(
+            texts=[
+                "When the module starts from marker alpha, why does marker alpha matter here?",
+                "The next section moves around another example.",
+            ],
+            segment_text_indexes=[[0, 1]],
+            semantic_quality_labels=["fragment", "fragment"],
+            merge_safety_labels=["risky", "risky"],
+            sentence_review_flags=[["low_sentence_autonomy"], []],
+        )
+
+        candidates = self._build_extractor(
+            pipeline_profile="quality_local",
+            qa_answer_search_strategy="local_rule_based",
+            qa_answer_ranking_strategy="rule_based",
+            min_qa_confidence=0.0,
+        ).extract(session)
+
+        self.assertEqual(candidates, [])
+
+    def test_quality_local_keeps_low_autonomy_with_span_support(self) -> None:
+        """Low-autonomy questions can pass when the answer span is substantive."""
+
+        session = self._build_session(
+            texts=[
+                "How does marker alpha stop?",
+                "Marker alpha stops when the stable region is reached.",
+                "This stopping point explains why the following example remains bounded.",
+            ],
+            segment_text_indexes=[[0, 1, 2]],
+            semantic_quality_labels=["fragment", "good", "good"],
+            merge_safety_labels=["risky", "safe", "safe"],
+            sentence_review_flags=[["low_sentence_autonomy"], [], []],
+        )
+
+        candidates = self._build_extractor(
+            pipeline_profile="quality_local",
+            qa_answer_search_strategy="local_rule_based",
+            qa_answer_ranking_strategy="rule_based",
+            min_qa_confidence=0.0,
+        ).extract(session)
+
+        self.assertEqual(len(candidates), 1)
+
+    def test_quality_local_rejects_weak_intra_sentence_qa_followup(self) -> None:
+        """Fragile intra-sentence questions should not bind to weak followups."""
+
+        session = self._build_session(
+            texts=[
+                "Did marker alpha do that? Well, that aside was just a setup.",
+                "And later the module changes direction entirely.",
+            ],
+            segment_text_indexes=[[0, 1]],
+            semantic_quality_labels=["run_on", "fragment"],
+            merge_safety_labels=["risky", "risky"],
+            sentence_review_flags=[["multi_utterance"], []],
+        )
+
+        candidates = self._build_extractor(
+            pipeline_profile="quality_local",
+            qa_answer_search_strategy="local_rule_based",
+            qa_answer_ranking_strategy="rule_based",
+            min_qa_confidence=0.0,
+        ).extract(session)
+
+        self.assertEqual(candidates, [])
+
+    def test_quality_local_rejects_competing_deferred_answer(self) -> None:
+        """Deferred answers near another question need stronger quality."""
+
+        session = self._build_session(
+            texts=[
+                "What does marker alpha control?",
+                "Maybe not here.",
+                "How does marker beta behave?",
+                "Several unrelated notes appear.",
+                "Marker alpha appears again in a loose aside.",
+            ],
+            starts=[0.0, 1.0, 2.0, 3.0, 8.0],
+            ends=[0.5, 1.5, 2.5, 3.5, 8.5],
+            segment_text_indexes=[[0, 1, 2, 3, 4]],
+        )
+
+        candidates = self._build_extractor(
+            pipeline_profile="quality_local",
+            qa_answer_search_strategy="local_rule_based",
+            qa_answer_ranking_strategy="rule_based",
+            answer_search_window_units=3,
+            deferred_answer_search_window_units=8,
+            min_qa_confidence=0.0,
+        ).extract(session)
+
+        self.assertFalse(
+            any(
+                "marker alpha control" in (candidate.question_text or "")
+                for candidate in candidates
+            ),
+        )
+
+    def test_quality_local_rejects_thin_implicit_competing_question(self) -> None:
+        """Implicit declarative questions need stronger local context."""
+
+        session = self._build_session(
+            texts=[
+                "Who cares?",
+                "What matters is how marker alpha relates to beta.",
+                "Because marker alpha relates loosely to beta.",
+            ],
+            segment_text_indexes=[[0, 1, 2]],
+        )
+
+        candidates = self._build_extractor(
+            pipeline_profile="quality_local",
+            qa_answer_search_strategy="local_rule_based",
+            qa_answer_ranking_strategy="rule_based",
+            min_qa_confidence=0.0,
+        ).extract(session)
+
+        self.assertFalse(
+            any(
+                "what matters" in (candidate.question_text or "").lower()
+                for candidate in candidates
+            ),
+        )
+
+    def test_quality_local_rejects_unanchored_quantity_answer(self) -> None:
+        """A numeric answer must be anchored to the quantity being asked for."""
+
+        session = self._build_session(
+            texts=[
+                "How many marker alpha units remain?",
+                "The module moves to a different example and mentions 12 beta units.",
+            ],
+            segment_text_indexes=[[0, 1]],
+        )
+
+        diagnostic_candidate = self._build_extractor(
+            qa_answer_search_strategy="local_rule_based",
+            qa_answer_ranking_strategy="rule_based",
+            min_qa_confidence=0.0,
+        ).extract(session)[0]
+        self.assertIn(
+            "unanchored_quantity_answer",
+            diagnostic_candidate.metadata["quality_features"]["risk_reasons"],
+        )
+
+        candidates = self._build_extractor(
+            pipeline_profile="quality_local",
+            qa_answer_search_strategy="local_rule_based",
+            qa_answer_ranking_strategy="rule_based",
+            min_qa_confidence=0.0,
+        ).extract(session)
+
+        self.assertEqual(candidates, [])
+
+    def test_quality_features_mark_thin_reply_to_weak_question(self) -> None:
+        """Very short replies should be visible as diagnostic risk."""
+
+        session = self._build_session(
+            texts=[
+                "Is marker alpha just beta?",
+                "It could be beta.",
+            ],
+            segment_text_indexes=[[0, 1]],
+        )
+
+        diagnostic_candidate = self._build_extractor(
+            qa_answer_search_strategy="local_rule_based",
+            qa_answer_ranking_strategy="rule_based",
+            min_qa_confidence=0.0,
+        ).extract(session)[0]
+        self.assertIn(
+            "thin_answer_reply",
+            diagnostic_candidate.metadata["quality_features"]["risk_reasons"],
+        )
+
     def test_marks_embedded_statement_question_intent(self) -> None:
         """Embedded sub-questions should be marked separately from autonomous questions."""
 
@@ -1032,6 +1448,35 @@ class QAPairExtractorTests(unittest.TestCase):
 
         self.assertEqual(candidates, [])
 
+    def test_quality_local_rejects_embedded_classroom_checkin(self) -> None:
+        """A check-in plus topic words should not become a didactic QA."""
+
+        session = self._build_session(
+            texts=[
+                "Mi state seguendo. Marker alpha.",
+                "Cosa significa?",
+                "If I do not know where the group is, I cannot help the room.",
+            ],
+            segment_text_indexes=[[0, 1, 2]],
+        )
+
+        candidate = self._build_extractor(
+            qa_answer_search_strategy="local_rule_based",
+            qa_answer_ranking_strategy="rule_based",
+            min_qa_confidence=0.0,
+        ).extract(session)[0]
+        self.assertIn("poll_or_backchannel_noise", candidate.reason_codes)
+        self.assertIn("poll_or_backchannel_noise", candidate.review_flags)
+
+        candidates = self._build_extractor(
+            pipeline_profile="quality_local",
+            qa_answer_search_strategy="local_rule_based",
+            qa_answer_ranking_strategy="rule_based",
+            min_qa_confidence=0.0,
+        ).extract(session)
+
+        self.assertEqual(candidates, [])
+
     def test_quality_local_rejects_procedural_question_requests(self) -> None:
         """Turn-management questions should not consume QA slots."""
 
@@ -1047,6 +1492,451 @@ class QAPairExtractorTests(unittest.TestCase):
             pipeline_profile="quality_local",
             qa_answer_search_strategy="local_rule_based",
             qa_answer_ranking_strategy="rule_based",
+            min_qa_confidence=0.0,
+        ).extract(session)
+
+        self.assertEqual(candidates, [])
+
+    def test_quality_local_rejects_followup_prompt_as_answer(self) -> None:
+        """A prompt for another speaker should not be treated as the answer."""
+
+        session = self._build_session(
+            texts=[
+                "Why did marker alpha start the module?",
+                "Tell us why marker alpha was chosen for the opening example.",
+                "Marker alpha was chosen because it exposes the boundary condition.",
+            ],
+            segment_text_indexes=[[0, 1, 2]],
+        )
+
+        candidate = self._build_extractor(
+            qa_answer_search_strategy="local_rule_based",
+            qa_answer_ranking_strategy="rule_based",
+            answer_search_window_units=1,
+            min_qa_confidence=0.0,
+        ).extract(session)[0]
+        self.assertIn(
+            "answer_responsiveness_followup_prompt",
+            candidate.reason_codes,
+        )
+        self.assertIn("followup_prompt_answer", candidate.review_flags)
+
+        candidates = self._build_extractor(
+            pipeline_profile="quality_local",
+            qa_answer_search_strategy="local_rule_based",
+            qa_answer_ranking_strategy="rule_based",
+            answer_search_window_units=1,
+            min_qa_confidence=0.0,
+        ).extract(session)
+
+        self.assertEqual(candidates, [])
+
+    def test_answer_responsiveness_score_separates_prompt_from_answer(self) -> None:
+        """Responsiveness diagnostics should not saturate every local answer."""
+
+        direct_session = self._build_session(
+            texts=[
+                "Why did marker alpha start the module?",
+                "Marker alpha starts the module because it exposes the boundary condition.",
+            ],
+            segment_text_indexes=[[0, 1]],
+        )
+        prompt_session = self._build_session(
+            texts=[
+                "Why did marker alpha start the module?",
+                "Tell us why marker alpha was chosen for the opening example.",
+            ],
+            segment_text_indexes=[[0, 1]],
+        )
+
+        extractor = self._build_extractor(
+            qa_answer_search_strategy="local_rule_based",
+            qa_answer_ranking_strategy="rule_based",
+            min_qa_confidence=0.0,
+        )
+        direct = extractor.extract(direct_session)[0]
+        prompt = extractor.extract(prompt_session)[0]
+
+        direct_score = direct.metadata["answer_debug"][
+            "answer_responsiveness_debug"
+        ]["score"]
+        prompt_score = prompt.metadata["answer_debug"][
+            "answer_responsiveness_debug"
+        ]["score"]
+
+        self.assertGreater(direct_score, prompt_score)
+        self.assertIn(
+            "raw_score_delta",
+            direct.metadata["answer_debug"]["answer_responsiveness_debug"],
+        )
+
+    def test_quality_local_keeps_socratic_same_sentence_answer(self) -> None:
+        """Short self-answered prompts should be recovered when they add an object."""
+
+        session = self._build_session(
+            texts=[
+                "Ready? If marker alpha accumulates, what do we obtain? We obtain limit beta.",
+            ],
+            segment_text_indexes=[[0]],
+        )
+
+        candidates = self._build_extractor(
+            pipeline_profile="quality_local",
+            qa_answer_search_strategy="local_rule_based",
+            qa_answer_ranking_strategy="rule_based",
+            min_qa_confidence=0.0,
+        ).extract(session)
+
+        self.assertEqual(len(candidates), 1)
+        candidate = candidates[0]
+        self.assertEqual(candidate.question_text, "What do we obtain?")
+        self.assertIn("limit beta", candidate.answer_text or "")
+        self.assertIn("socratic_short_answer_support", candidate.reason_codes)
+
+    def test_quality_local_keeps_very_short_socratic_answer(self) -> None:
+        """Two-token result answers can be valid for object-gap prompts."""
+
+        session = self._build_session(
+            texts=[
+                "If the marker accumulates, what do we obtain? We obtain beta.",
+            ],
+            segment_text_indexes=[[0]],
+        )
+
+        candidates = self._build_extractor(
+            pipeline_profile="quality_local",
+            qa_answer_search_strategy="local_rule_based",
+            qa_answer_ranking_strategy="rule_based",
+            min_qa_confidence=0.0,
+        ).extract(session)
+
+        self.assertEqual(len(candidates), 1)
+        candidate = candidates[0]
+        self.assertEqual(candidate.question_text, "What do we obtain?")
+        self.assertEqual(candidate.answer_text, "We obtain beta.")
+        self.assertIn("socratic_short_answer_support", candidate.reason_codes)
+
+    def test_quality_local_trims_trailing_answer_tag(self) -> None:
+        """A final confirmation tag should not turn a real answer into a question."""
+
+        session = self._build_session(
+            texts=[
+                "What do we obtain? We obtain beta, right?",
+            ],
+            segment_text_indexes=[[0]],
+        )
+
+        candidates = self._build_extractor(
+            pipeline_profile="quality_local",
+            qa_answer_search_strategy="local_rule_based",
+            qa_answer_ranking_strategy="rule_based",
+            min_qa_confidence=0.0,
+        ).extract(session)
+
+        self.assertEqual(len(candidates), 1)
+        candidate = candidates[0]
+        self.assertEqual(candidate.answer_text, "We obtain beta")
+        self.assertIn("answer_trailing_tag_trimmed", candidate.reason_codes)
+
+    def test_quality_local_prefers_same_sentence_socratic_answer(self) -> None:
+        """A direct same-sentence result beats a later explanatory continuation."""
+
+        session = self._build_session(
+            texts=[
+                "If the marker accumulates, what do we obtain? We obtain beta.",
+                "So the later graph remains finite over the interval.",
+            ],
+            segment_text_indexes=[[0, 1]],
+        )
+
+        candidates = self._build_extractor(
+            pipeline_profile="quality_local",
+            qa_answer_search_strategy="local_rule_based",
+            qa_answer_ranking_strategy="rule_based",
+            min_qa_confidence=0.0,
+        ).extract(session)
+
+        self.assertEqual(len(candidates), 1)
+        candidate = candidates[0]
+        self.assertEqual(candidate.question_text, "What do we obtain?")
+        self.assertEqual(candidate.answer_text, "We obtain beta.")
+        self.assertIn("same_sentence_answer", candidate.reason_codes)
+
+    def test_quality_local_keeps_terminal_object_question_answer(self) -> None:
+        """Object-final prompts such as 'calculate what?' can be valid QA."""
+
+        session = self._build_session(
+            texts=[
+                "and then calculate what? Calculate marker beta.",
+            ],
+            segment_text_indexes=[[0]],
+        )
+
+        candidates = self._build_extractor(
+            pipeline_profile="quality_local",
+            qa_answer_search_strategy="local_rule_based",
+            qa_answer_ranking_strategy="rule_based",
+            min_qa_confidence=0.0,
+        ).extract(session)
+
+        self.assertEqual(len(candidates), 1)
+        candidate = candidates[0]
+        self.assertIn("calculate what?", candidate.question_text.lower())
+        self.assertIn("marker beta", candidate.answer_text or "")
+        self.assertIn("socratic_short_answer_support", candidate.reason_codes)
+
+    def test_quality_local_rejects_incomplete_numeric_socratic_answer(self) -> None:
+        """Bare-number short answers need an object to avoid truncated spans."""
+
+        session = self._build_session(
+            texts=[
+                "What do we have? We have two.",
+            ],
+            segment_text_indexes=[[0]],
+        )
+
+        candidates = self._build_extractor(
+            pipeline_profile="quality_local",
+            qa_answer_search_strategy="local_rule_based",
+            qa_answer_ranking_strategy="rule_based",
+            min_qa_confidence=0.0,
+        ).extract(session)
+
+        self.assertEqual(candidates, [])
+
+    def test_quality_local_keeps_causal_answer_after_why_question(self) -> None:
+        """A causal answer after a question should not become a competing question."""
+
+        session = self._build_session(
+            texts=[
+                "Why does the marker matter?",
+                "Because marker evidence measures the later state.",
+            ],
+            segment_text_indexes=[[0, 1]],
+        )
+
+        candidates = self._build_extractor(
+            pipeline_profile="quality_local",
+            qa_answer_search_strategy="local_rule_based",
+            qa_answer_ranking_strategy="rule_based",
+            min_qa_confidence=0.0,
+        ).extract(session)
+
+        self.assertEqual(len(candidates), 1)
+        candidate = candidates[0]
+        self.assertEqual(candidate.question_text, "Why does the marker matter?")
+        self.assertIn("measures the later state", candidate.answer_text or "")
+
+    def test_quality_local_recovers_interview_cluster_answer(self) -> None:
+        """Interview follow-ups and prompts can bridge to the first real answer."""
+
+        session = self._build_session(
+            texts=[
+                "Why did marker speaker choose marker field?",
+                "Why did marker speaker begin marker study?",
+                "Tell us about marker path behind marker work.",
+                "Why did I choose marker field?",
+                "Marker origin beta created durable motivation for marker study.",
+            ],
+            segment_text_indexes=[[0, 1, 2, 3, 4]],
+        )
+
+        candidates = self._build_extractor(
+            pipeline_profile="quality_local",
+            qa_answer_search_strategy="local_rule_based",
+            qa_answer_ranking_strategy="rule_based",
+            min_qa_confidence=0.0,
+        ).extract(session)
+
+        self.assertGreaterEqual(len(candidates), 1)
+        recovered = [
+            candidate
+            for candidate in candidates
+            if "marker origin beta" in (candidate.answer_text or "").lower()
+        ]
+        self.assertEqual(len(recovered), 1)
+        self.assertIn(
+            recovered[0].question_text,
+            {
+                "Why did marker speaker choose marker field?",
+                "Why did marker speaker begin marker study?",
+                "Why did I choose marker field?",
+            },
+        )
+
+    def test_quality_local_rejects_causal_declarative_statement_question(self) -> None:
+        """Causal explanation clauses without a question mark are not questions."""
+
+        session = self._build_session(
+            texts=[
+                "Because marker limitation alpha is that marker process beta cannot repeat inside marker unit gamma.",
+                "Marker option delta uses controlled marker simulation.",
+            ],
+            segment_text_indexes=[[0, 1]],
+        )
+
+        candidates = self._build_extractor(
+            pipeline_profile="quality_local",
+            qa_answer_search_strategy="local_rule_based",
+            qa_answer_ranking_strategy="rule_based",
+            min_qa_confidence=0.0,
+        ).extract(session)
+
+        self.assertEqual(candidates, [])
+
+    def test_quality_local_rejects_causal_existential_tag_question(self) -> None:
+        """A causal statement ending in a tag should stay rhetorical."""
+
+        session = self._build_session(
+            texts=[
+                "Because marker ordering exists among marker groups, right?",
+                "Marker group alpha appears at the top of marker ordering.",
+            ],
+            segment_text_indexes=[[0, 1]],
+        )
+
+        candidates = self._build_extractor(
+            pipeline_profile="quality_local",
+            qa_answer_search_strategy="local_rule_based",
+            qa_answer_ranking_strategy="rule_based",
+            min_qa_confidence=0.0,
+        ).extract(session)
+
+        self.assertEqual(candidates, [])
+
+    def test_quality_local_extends_answer_before_competing_question(self) -> None:
+        """A declarative prefix before the next question can complete an answer."""
+
+        session = self._build_session(
+            texts=[
+                "Why did marker alpha start?",
+                "Response beta.",
+                "That response beta completed marker path. Did marker gamma change later?",
+            ],
+            segment_text_indexes=[[0, 1, 2]],
+        )
+
+        candidates = self._build_extractor(
+            pipeline_profile="quality_local",
+            qa_answer_search_strategy="local_rule_based",
+            qa_answer_ranking_strategy="rule_based",
+            min_qa_confidence=0.0,
+        ).extract(session)
+
+        self.assertEqual(len(candidates), 1)
+        candidate = candidates[0]
+        self.assertIn("Response beta", candidate.answer_text or "")
+        self.assertIn("completed marker path", candidate.answer_text or "")
+
+    def test_quality_local_rejects_question_continuation_answer(self) -> None:
+        """Clarifying continuations should not be treated as answers."""
+
+        session = self._build_session(
+            texts=[
+                "Is there a marker track or is marker route mandatory?",
+                "That is, if marker user alpha wants marker study beta, which marker path follows?",
+                "Marker user alpha usually starts from marker program beta.",
+            ],
+            segment_text_indexes=[[0, 1, 2]],
+        )
+
+        candidates = self._build_extractor(
+            pipeline_profile="quality_local",
+            qa_answer_search_strategy="local_rule_based",
+            qa_answer_ranking_strategy="rule_based",
+            min_qa_confidence=0.0,
+        ).extract(session)
+
+        self.assertFalse(
+            any(
+                "which marker path" in (candidate.answer_text or "")
+                for candidate in candidates
+            ),
+        )
+
+    def test_quality_local_rejects_embedded_rhetorical_fragment(self) -> None:
+        """Embedded monologue fragments should not survive on answer strength."""
+
+        session = self._build_session(
+            texts=[
+                "Marker work is long and marker users criticize, continue because?",
+                "Because marker work lasts through marker duration and marker motive matters.",
+            ],
+            segment_text_indexes=[[0, 1]],
+        )
+
+        candidates = self._build_extractor(
+            pipeline_profile="quality_local",
+            qa_answer_search_strategy="local_rule_based",
+            qa_answer_ranking_strategy="rule_based",
+            min_qa_confidence=0.0,
+        ).extract(session)
+
+        self.assertEqual(candidates, [])
+
+    def test_quality_local_rejects_weak_implicit_quantity_question(self) -> None:
+        """Quantity cues without a question mark need responsive quantity evidence."""
+
+        session = self._build_session(
+            texts=[
+                "Quanto simile marker alpha a basis beta",
+                "So the transform moves into a later basis example.",
+            ],
+            segment_text_indexes=[[0, 1]],
+        )
+
+        candidate = self._build_extractor(
+            qa_answer_search_strategy="local_rule_based",
+            qa_answer_ranking_strategy="rule_based",
+            min_qa_confidence=0.0,
+        ).extract(session)[0]
+        self.assertIn(
+            "weak_implicit_quantity_question",
+            candidate.metadata["quality_features"]["risk_reasons"],
+        )
+
+        candidates = self._build_extractor(
+            pipeline_profile="quality_local",
+            qa_answer_search_strategy="local_rule_based",
+            qa_answer_ranking_strategy="rule_based",
+            min_qa_confidence=0.0,
+        ).extract(session)
+
+        self.assertEqual(candidates, [])
+
+    def test_quality_local_rejects_weak_expanded_contextual_question(self) -> None:
+        """A short contextual head with risky boundaries should not survive competition."""
+
+        session = self._build_session(
+            texts=[
+                "The previous answer stores module delta in the table.",
+                "What now?",
+                "So module delta moves into the next table.",
+                "What follows?",
+            ],
+            segment_text_indexes=[[0, 1, 2, 3]],
+            semantic_quality_labels=["good", "run_on", "good", "good"],
+            merge_safety_labels=["safe", "risky", "safe", "safe"],
+            review_priorities=["low", "high", "low", "low"],
+        )
+
+        candidate = self._build_extractor(
+            qa_answer_search_strategy="local_rule_based",
+            qa_answer_ranking_strategy="rule_based",
+            answer_search_window_units=3,
+            min_qa_confidence=0.0,
+        ).extract(session)[0]
+        self.assertIn(
+            "weak_expanded_contextual_question",
+            candidate.metadata["quality_features"]["risk_reasons"],
+        )
+        self.assertIn("competing_question", candidate.review_flags)
+
+        candidates = self._build_extractor(
+            pipeline_profile="quality_local",
+            qa_answer_search_strategy="local_rule_based",
+            qa_answer_ranking_strategy="rule_based",
+            answer_search_window_units=3,
             min_qa_confidence=0.0,
         ).extract(session)
 
@@ -1132,6 +2022,55 @@ class QAPairExtractorTests(unittest.TestCase):
         ).extract(session)
 
         self.assertEqual(candidates, [])
+
+    def test_quality_local_rejects_weak_monologue_continuation(self) -> None:
+        """Adjacent same-speaker continuation should not pass as an answer."""
+
+        session = self._build_session(
+            texts=[
+                "In this module, what about marker alpha?",
+                "Gamma rotates through a separate example.",
+            ],
+            segment_text_indexes=[[0, 1]],
+        )
+
+        candidate = self._build_extractor(
+            qa_answer_search_strategy="local_rule_based",
+            qa_answer_ranking_strategy="rule_based",
+            min_qa_confidence=0.0,
+        ).extract(session)[0]
+        self.assertIn("monologue_continuation_risk", candidate.reason_codes)
+        self.assertIn("monologue_continuation_risk", candidate.review_flags)
+
+        quality_candidates = self._build_extractor(
+            pipeline_profile="quality_local",
+            qa_answer_search_strategy="local_rule_based",
+            qa_answer_ranking_strategy="rule_based",
+            min_qa_confidence=0.0,
+        ).extract(session)
+        self.assertEqual(quality_candidates, [])
+
+    def test_quality_local_keeps_anchored_didactic_self_answer(self) -> None:
+        """A local self-answer with clear topical grounding should remain usable."""
+
+        session = self._build_session(
+            texts=[
+                "What does marker alpha represent?",
+                "Marker alpha represents the threshold that separates stable and unstable states.",
+            ],
+            segment_text_indexes=[[0, 1]],
+        )
+
+        candidates = self._build_extractor(
+            pipeline_profile="quality_local",
+            qa_answer_search_strategy="local_rule_based",
+            qa_answer_ranking_strategy="rule_based",
+            min_qa_confidence=0.0,
+        ).extract(session)
+
+        self.assertEqual(len(candidates), 1)
+        self.assertNotIn("monologue_continuation_risk", candidates[0].reason_codes)
+        self.assertIn("threshold", candidates[0].answer_text or "")
 
     def test_quality_local_rejects_weak_embedded_statement_questions(self) -> None:
         """The local quality profile should not export weak embedded questions."""
@@ -1688,10 +2627,15 @@ class QAPairExtractorTests(unittest.TestCase):
         """Create a test configuration for extractor and pipeline checks."""
 
         with tempfile.TemporaryDirectory() as temp_directory:
-            return PipelineConfig(
-                working_directory=Path(temp_directory) / "artifacts",
-                **config_overrides,
-            )
+            config_values: dict[str, object] = {
+                "working_directory": Path(temp_directory) / "artifacts",
+                "qa_answer_search_strategy": "local_rule_based",
+                "qa_answer_ranking_strategy": "rule_based",
+                "qa_semantic_retrieval_enabled": False,
+                "qa_semantic_reranking_enabled": False,
+            }
+            config_values.update(config_overrides)
+            return PipelineConfig(**config_values)
 
     @staticmethod
     def _build_session(

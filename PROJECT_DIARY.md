@@ -2104,3 +2104,1272 @@ Decisione aggiornata:
   modifichi effettivamente boundary/splitting in modo conservativo oppure un
   modulo separato di didactic-QA-from-statements, da tenere distinto dalla
   raccolta di Q/A reali.
+
+## 2026-06-26 - Micro-ciclo wtpsplit strict + guardrail self-continuation
+
+Contesto:
+
+- Le run con `wtpsplit` reale hanno mostrato costo marginale accettabile: circa
+  `57.4s` totali di sentence reconstruction su 6 esempi, pari a circa `1.03%`
+  della cold run stimata `quality_local`.
+- La qualita' non e' migliorata in modo decisivo solo cambiando splitter: restano
+  self-continuation nei monologhi/panel, risposte localmente vicine ma non
+  responsive, e zero-yield su `SSL1P1`.
+
+Decisioni implementate:
+
+- `wtpsplit` diventa requisito esplicito del ramo sentence reconstruction quando
+  `sentence_splitter_backend = "wtpsplit"`.
+- Il fallback silenzioso a `fallback_rules` viene rimosso per il backend
+  `wtpsplit`: se il pacchetto, il modello o lo split falliscono, la pipeline
+  fallisce con messaggio chiaro.
+- `fallback_rules` resta disponibile solo come scelta esplicita del backend,
+  utile per test, diagnosi o ambienti volutamente leggeri.
+- Aggiunta dipendenza `wtpsplit>=2.2,<3` a `pyproject.toml` e `requirements.txt`.
+
+Guardrail QA v1:
+
+- Aggiunto il segnale diagnostico `monologue_continuation_risk` nello scoring
+  delle answer candidate.
+- Il segnale usa solo feature generali gia' presenti nella pipeline:
+  - risposta locale e adiacente;
+  - assenza di speaker turn affidabile;
+  - domanda con intent debole/embedded oppure speaker uguale affidabile;
+  - risposta senza ancore lessicali/numeriche e con bassa responsiveness.
+- In `quality_local`, il gate finale scarta candidati con
+  `monologue_continuation_risk` quando il quality score resta basso o sono
+  presenti rischi come `weak_answer_responsiveness`, `embedded_statement_question`
+  o `weak_question_form`.
+- Esenzione esplicita: una risposta con `answer_meta_opening_trimmed` non viene
+  penalizzata solo per mancanza di speaker boundary, per non scartare risposte
+  sostanziali dopo aperture tipo meta-commento.
+
+Test:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src .venv/bin/python -m unittest tests.test_qa_extractor
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src .venv/bin/python -m unittest tests.test_qa_extractor tests.test_sentence_reconstruction tests.test_pipeline_config tests.test_main_cli
+```
+
+Risultato:
+
+- `tests.test_qa_extractor`: `58` OK.
+- Batteria mirata QA/sentence/config/CLI: `93` OK.
+
+Note architetturali:
+
+- Il guardrail non aggiunge un nuovo file o un nuovo ramo pipeline.
+- Le informazioni granulari restano nel candidato (`answer_debug`,
+  `quality_features`, reason code e review flag); i metrics continuano a poter
+  aggregare dai reason code.
+- I test usano esempi sintetici astratti (`marker alpha`, `module delta`) per
+  evitare regole basate sui casi reali delle valutazioni.
+
+Prossima verifica:
+
+- Run locali `quality_local structural` su tutti gli input, con `wtpsplit` reale
+  e cache coerente, per misurare variazione di candidati prima di chiedere una
+  nuova AI review esterna.
+
+### Esito run locali guardrail self-continuation
+
+Run locali eseguite con workdir temporanea senza cache `sentences`, riusando solo
+normalizzazione/transcrizione/alignment/utterances:
+
+- output batch:
+  `/Users/matteopogetta/Documents/ExerPlazaSample/output/quality_local_guardrail_2026-06-26_all`
+- backend effettivo in tutte le run: `wtpsplit_sat`; fallback source count `0`.
+
+Cartelle evaluation generate:
+
+- Deep Time: `2026-06-26_200950_quality_local_structural`
+- Eugenia Cheng: `2026-06-26_201004_quality_local_structural`
+- L25P08: `2026-06-26_201013_quality_local_structural`
+- L25P09: `2026-06-26_201021_quality_local_structural`
+- SSL1P1: `2026-06-26_201029_quality_local_structural`
+- Stanford: `2026-06-26_201045_quality_local_structural` sotto label
+  `stanford_seminar_-_human-centered_explainable_ai_from_algorithms_to_user_experiences`.
+
+Confronto locale contro baseline precedente:
+
+- Deep Time: `3 -> 3`, signal `0.5402 -> 0.5402`, invariato.
+- Eugenia: `23 -> 20`, signal `0.8279 -> 0.8344`; rimossi
+  `qa_0025`, `qa_0035`, `qa_0063`, tutti weak/competing o non responsivi.
+- L25P08: `3 -> 3`, signal invariato `0.6131`.
+- L25P09: `4 -> 3`, signal `0.5213 -> 0.5157`; rimosso `qa_0006`,
+  candidato premise/setup non realmente risposta.
+- SSL1P1: `0 -> 0`, invariato; il guardrail non affronta ancora il recall
+  didattico.
+- Stanford: `15 -> 14`, signal `0.8540 -> 0.8631`; rimosso `qa_0017`,
+  embedded/competing con risposta potenzialmente non autonoma.
+
+Verifiche:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src .venv/bin/python -m unittest tests.test_qa_extractor
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src .venv/bin/python -m unittest tests.test_qa_extractor tests.test_sentence_reconstruction tests.test_pipeline_config tests.test_main_cli
+```
+
+Risultato:
+
+- QA: `58` OK.
+- Batteria mirata: `93` OK.
+
+La suite completa `unittest discover -s tests` non e' conclusiva per un problema
+di ambiente `pytest` nella venv (`ImportError: cannot import name '__version__'
+from '_pytest'`) in `tests/test_placeholder_cli.py`; non e' collegato alle modifiche
+QA/sentence.
+
+Decisione:
+
+- Le run locali indicano un miglioramento di precisione su Eugenia e Stanford e
+  una riduzione di un candidato debole su L25P09, senza aumentare recall.
+- Serve AI review esterna mirata solo sulle run cambiate: Eugenia, L25P09,
+  Stanford. Deep Time, L25P08 e SSL1P1 non cambiano localmente e possono essere
+  saltate in questa iterazione.
+
+## 2026-06-26 - Micro-ciclo responsiveness floor, thin context e autonomia domanda
+
+Contesto:
+
+- La AI review esterna sul guardrail self-continuation ha confermato la direzione:
+  `quality_local` evita errori catastrofici di distant-answer e migliora Stanford,
+  ma restano falsi positivi legati a:
+  - domande embedded o retoriche con bassa autonomia;
+  - risposte localmente vicine ma non abbastanza responsive;
+  - contesti troppo deboli o quasi interamente copiati da domanda/risposta.
+- Obiettivo del micro-ciclo: aumentare precisione senza introdurre un nuovo
+  modello, senza cambiare schema pubblico e senza usare frasi reali dei casi di
+  valutazione come regole.
+
+Regole implementate:
+
+- Aggiunto reason code diagnostico `thin_context_risk` quando il contesto e'
+  troppo corto o quasi interamente sovrapposto a domanda/risposta.
+- In `quality_local`, un candidato con `thin_context_risk` viene scartato se il
+  `final_quality_score` resta sotto `0.60`.
+- Aggiunto floor locale su `answer_responsiveness_score`: sotto `0.42`, il
+  candidato viene scartato solo quando coesistono segnali di rischio come
+  `weak_answer_responsiveness`, `thin_context_risk`, `quality_local_deferred`,
+  `embedded_statement_question`, `weak_question_form` o bassa rilevanza.
+- Aggiunto gate per domande con `low_sentence_autonomy` insieme a
+  `embedded_statement_question` o `weak_question_form`: scarto solo sotto
+  `final_quality_score < 0.60`.
+- Nessuna modifica a ranking semantico, profili, export pubblico o numero di
+  file prodotti.
+
+Test:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src .venv/bin/python -m unittest tests.test_qa_extractor tests.test_sentence_reconstruction tests.test_pipeline_config tests.test_main_cli
+```
+
+Risultato:
+
+- Batteria mirata: `96` OK.
+- La suite completa resta non conclusiva per il problema di ambiente `pytest` in
+  `tests/test_placeholder_cli.py` (`ImportError: cannot import name
+  '__version__' from '_pytest'`), non collegato alle modifiche QA/sentence.
+
+Run locali:
+
+- Primo passaggio `responsiveness_floor_2026-06-26`:
+  - Eugenia: `20 -> 19`, signal `0.8344 -> 0.8364`, rimosso un deferred non
+    responsive.
+  - L25P09: `3 -> 3`, invariato.
+  - Stanford: `14 -> 14`, invariato nel count; un candidato riceve
+    `thin_context_risk`.
+- Secondo passaggio `low_autonomy_gate_2026-06-26`:
+  - Eugenia: `19 -> 16`, signal `0.8364 -> 0.8493`; rimossi `qa_0006`,
+    `qa_0028`, `qa_0043`, tutti con bassa autonomia/embedded/weak-form.
+  - Stanford: `14 -> 13`, signal `0.8517 -> 0.8493`; rimosso `qa_0008`, domanda
+    weak-form con bassa autonomia.
+
+Decisione:
+
+- Il filtro locale ora sta togliendo principalmente candidati gia' coerenti con
+  le critiche della AI review esterna, senza aumentare complessita' di pipeline.
+- Il leggero calo del signal interno Stanford (`0.8517 -> 0.8493`) e' accettabile
+  localmente perche' il candidato rimosso era tra quelli criticati come debole.
+- A questo punto serve AI review esterna mirata sulle ultime run di Eugenia e
+  Stanford per confermare che la riduzione di yield corrisponda a maggiore
+  precisione percepita.
+
+## 2026-06-27 - Micro-ciclo answer responsiveness v2: quantita' non ancorata
+
+Contesto:
+
+- La AI review esterna sulle run `2026-06-26_204830` (Eugenia) e
+  `2026-06-26_204844` (Stanford) ha confermato un limite residuo del profilo
+  `quality_local`: la risposta puo' sembrare buona per overlap lessicale o
+  presenza di numeri, ma non rispondere davvero alla domanda.
+- Caso generale osservato: domande quantitative (`how many`, `how much`, ecc.)
+  in contesti narrativi o esempi/problemi, dove la risposta contiene numeri ma
+  non fornisce la quantita' richiesta.
+- Vincolo architetturale confermato: nessuna regola basata su frasi reali dei
+  test; solo feature generali su tipo domanda, numeri condivisi, numeri non
+  condivisi, lunghezza della risposta, cue di risposta e contesto.
+
+Regole implementate:
+
+- In `answer_responsiveness_debug` la quantita' viene distinta in:
+  - `has_direct_quantity_support`: numeri condivisi tra domanda e risposta;
+  - `has_indirect_quantity_support`: la domanda chiede una quantita' e la
+    risposta contiene numeri non condivisi.
+- Il supporto quantitativo indiretto riceve un bonus molto piu' piccolo del
+  supporto diretto.
+- Se una risposta quantitativa indiretta e' lunga, non ancorata e sostenuta solo
+  da cue discorsivi deboli, viene aggiunto il reason code
+  `answer_responsiveness_unanchored_quantity`, aggregato in
+  `quality_features.risk_reasons` come `unanchored_quantity_answer`.
+- In `quality_local`, `unanchored_quantity_answer` viene scartato quando si
+  combina con `competing_question` o con quality score non abbastanza alto.
+- Aggiunto `thin_answer_reply` come feature diagnostica, ma non come gate
+  autonomo: il primo tentativo era troppo aggressivo e rischiava di scartare
+  Q/A colloquiali ma valide.
+- `low_question_quality` e' stato provato come rischio aggregato, ma rimosso dai
+  `quality_features`: era troppo rumoroso su domande conversazionali valide.
+
+Test:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src .venv/bin/python -m unittest \
+  tests.test_qa_extractor.QAPairExtractorTests.test_quality_local_rejects_unanchored_quantity_answer \
+  tests.test_qa_extractor.QAPairExtractorTests.test_quality_features_mark_thin_reply_to_weak_question \
+  tests.test_qa_extractor.QAPairExtractorTests.test_quality_local_keeps_anchored_didactic_self_answer
+```
+
+Risultato:
+
+- `3` OK.
+
+Run locali:
+
+- Eugenia v2e:
+  `2026-06-27_114545_quality_local_structural`
+- Confronto contro AI-reviewed
+  `2026-06-26_204830_quality_local_structural`:
+  - candidati `16 -> 14`;
+  - rimossi `qa_0008` e `qa_0009`, entrambi gia' giudicati `reject` dalla AI
+    review esterna come domande quantitative interne a un esempio narrativo;
+  - signal interno `0.8493 -> 0.7723`, calo atteso perche' quei falsi positivi
+    avevano overlap lessicale/numerico alto pur essendo semanticamente scorretti.
+- Stanford non e' stato rilanciato dopo la soglia quantitativa finale perche' il
+  set non contiene il pattern quantitativo toccato; la precedente run v2d era
+  invariata nel count.
+
+Decisione:
+
+- Il micro-step e' abbastanza mirato da chiedere AI review esterna solo su
+  Eugenia v2e.
+- Se la review conferma che i due reject sono rimossi senza perdita di keep
+  importanti, la regola `unanchored_quantity_answer` resta.
+- Prossima linea di lavoro dopo conferma: non aumentare altri gate locali, ma
+  ragionare su una stima piu' affidabile di answer responsiveness non basata
+  solo su overlap lessicale, possibilmente sempre locale e open-source.
+
+## 2026-06-27 - Micro-ciclo answer responsiveness v3: reject residui Eugenia
+
+Contesto:
+
+- La AI review esterna della run `2026-06-27_114545_quality_local_structural`
+  ha confermato il miglioramento del micro-ciclo quantitativo:
+  - decisioni `keep/revise/reject`: da circa `7/3/6` a `8/3/3`;
+  - score globale ancora `3`, ma con precisione percepita migliore;
+  - i due falsi positivi quantitativi narrativi sono stati rimossi.
+- Restavano tre reject chiari:
+  - una domanda retorica intra-sentence con risposta non realmente responsive;
+  - una risposta deferred con competing question;
+  - una domanda/titolo a bassa autonomia con risposta narrativa non ancorata.
+
+Regole implementate:
+
+- Gate `quality_local` su deferred+competing:
+  - se un candidato ha `quality_local_deferred` + `competing_question` e
+    `final_quality_score < 0.72`, viene scartato.
+- Gate intra-sentence fragile:
+  - se la domanda viene da `intra_sentence_qa`, ha `question_score <= 0.55`,
+    nessun cue di risposta, overlap lessicale minimo e answer context negativo,
+    viene scartata.
+- Gate low-autonomy con ancoraggio debole:
+  - se `low_sentence_autonomy`, nessun cue di risposta, overlap lessicale minimo,
+    nessun supporto di completamento dello span e `final_quality_score < 0.78`,
+    viene scartato.
+  - Il primo tentativo senza controllo su `span_completeness` era troppo
+    aggressivo e rimuoveva `qa_0014`, candidato valutato forte; la regola e'
+    stata corretta.
+- Gate implicit question cue:
+  - se una domanda implicita/dichiarativa ha `thin_context_risk` e in piu'
+    `competing_question` o `circular_answer_echo`, con
+    `final_quality_score < 0.74`, viene scartata.
+  - Questo evita che la deduplica faccia emergere un near-duplicate dichiarativo
+    dopo la rimozione del candidato principale.
+
+Test:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src .venv/bin/python -m unittest \
+  tests.test_qa_extractor.QAPairExtractorTests.test_quality_local_rejects_low_autonomy_with_weak_answer_anchor \
+  tests.test_qa_extractor.QAPairExtractorTests.test_quality_local_keeps_low_autonomy_with_span_support \
+  tests.test_qa_extractor.QAPairExtractorTests.test_quality_local_rejects_weak_intra_sentence_qa_followup \
+  tests.test_qa_extractor.QAPairExtractorTests.test_quality_local_rejects_competing_deferred_answer \
+  tests.test_qa_extractor.QAPairExtractorTests.test_quality_local_rejects_thin_implicit_competing_question \
+  tests.test_qa_extractor.QAPairExtractorTests.test_quality_local_rejects_unanchored_quantity_answer \
+  tests.test_qa_extractor.QAPairExtractorTests.test_quality_features_mark_thin_reply_to_weak_question \
+  tests.test_qa_extractor.QAPairExtractorTests.test_quality_local_keeps_anchored_didactic_self_answer
+```
+
+Risultato:
+
+- `8` OK.
+
+Run locale:
+
+- Eugenia v3c:
+  `2026-06-27_142304_quality_local_structural`
+- Confronto contro la run AI-reviewed
+  `2026-06-27_114545_quality_local_structural`:
+  - candidati `14 -> 11`;
+  - rimossi `qa_0034`, `qa_0055`, `qa_0067`;
+  - nessun candidato aggiunto;
+  - i tre rimossi corrispondono ai tre reject residui della review esterna.
+- Il signal interno scende `0.7723 -> 0.7090` perche' i reject avevano ancora
+  punteggi locali medio/alti; in questo caso il signal interno e' meno
+  affidabile della review semantica esterna.
+
+Decisione:
+
+- Serve AI review esterna mirata su `2026-06-27_142304_quality_local_structural`.
+- Se confermata, questo chiude il ciclo Eugenia sul fronte precisione locale:
+  resterebbe da verificare su Stanford e sugli altri input che i gate non
+  riducano recall utile in contesti diversi.
+
+## 2026-06-30 - Micro-ciclo answer responsiveness v4: ultimo reject Eugenia
+
+Contesto:
+
+- La AI review esterna della run `2026-06-27_142304_quality_local_structural`
+  ha confermato il miglioramento del ciclo v3:
+  - score `3 -> 4`;
+  - decisioni da `8 keep / 3 revise / 3 reject` a
+    `8 keep / 2 revise / 1 reject`;
+  - il profilo `quality_local` ha evitato errori deferred/distant e ha mantenuto
+    risposte realmente responsive.
+- Rimaneva un solo reject: una domanda narrativa/riportata con bassa autonomia,
+  risposta breve come continuazione del racconto, nessun vero cue di risposta e
+  contesto-answer debole.
+
+Regola corretta:
+
+- Rafforzato il gate gia' esistente su `low_sentence_autonomy`, ma solo quando
+  coesistono tutti questi segnali:
+  - nessun cue di risposta (`answer_cues <= 0`);
+  - overlap lessicale minimo (`keyword_overlap <= 0.05`);
+  - nessun supporto di completamento answer span (`span_completeness <= 0`);
+  - answer context negativo;
+  - `final_quality_score < 0.84`.
+- La soglia mantiene la salvaguardia introdotta nel v3: candidati con risposta
+  sostanziale/estesa e supporto di span, come `qa_0014`, non devono essere
+  scartati solo per bassa autonomia della domanda.
+
+Test:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src .venv/bin/python -m unittest \
+  tests.test_qa_extractor.QAPairExtractorTests.test_quality_local_rejects_low_autonomy_with_weak_answer_anchor \
+  tests.test_qa_extractor.QAPairExtractorTests.test_quality_local_keeps_low_autonomy_with_span_support \
+  tests.test_qa_extractor.QAPairExtractorTests.test_quality_local_rejects_weak_intra_sentence_qa_followup \
+  tests.test_qa_extractor.QAPairExtractorTests.test_quality_local_rejects_competing_deferred_answer \
+  tests.test_qa_extractor.QAPairExtractorTests.test_quality_local_rejects_thin_implicit_competing_question \
+  tests.test_qa_extractor.QAPairExtractorTests.test_quality_local_rejects_unanchored_quantity_answer \
+  tests.test_qa_extractor.QAPairExtractorTests.test_quality_features_mark_thin_reply_to_weak_question \
+  tests.test_qa_extractor.QAPairExtractorTests.test_quality_local_keeps_anchored_didactic_self_answer
+```
+
+Risultato:
+
+- `8` OK.
+
+Run locale:
+
+- Eugenia v4:
+  `2026-06-30_085458_quality_local_structural`
+- Confronto contro la run AI-reviewed
+  `2026-06-27_142304_quality_local_structural`:
+  - candidati `11 -> 10`;
+  - rimosso solo `qa_0038`, l'unico reject residuo della review esterna;
+  - nessun candidato aggiunto;
+  - `qa_0014` resta presente, confermando che il gate non colpisce la domanda
+    low-autonomy con risposta sostanziale.
+
+Decisione:
+
+- Serve una AI review esterna finale e mirata su
+  `2026-06-30_085458_quality_local_structural`.
+- Se confermata, il ciclo di precisione su Eugenia puo' essere chiuso; il passo
+  successivo deve essere la generalizzazione su Stanford/L25P09/Deep Time e non
+  ulteriore tuning sullo stesso audio.
+
+### Esito AI review esterna v4
+
+Valutazione esterna completata su:
+
+- `2026-06-30_085458_quality_local_structural`
+
+Risultato:
+
+- score qualita': `4`, invariato rispetto a v3c;
+- runtime value: `4`, invariato;
+- decisioni: `8 keep / 2 revise / 0 reject`;
+- tutti i candidati rimanenti hanno risposta effettivamente responsive e
+  grounding completo;
+- i due candidati ancora deboli sono `revise`, non `reject`, e dipendono da
+  sentence reconstruction/context quality:
+  - `qa_0014`: merge/question text imperfetto;
+  - `qa_0053`: answer span troncato.
+
+Decisione aggiornata:
+
+- Il tuning su Eugenia e' chiuso per ora.
+- Non conviene stringere ulteriormente i gate su questo audio: il rischio e'
+  perdere recall utile per correggere difetti che appartengono piu' a sentence
+  reconstruction/context extraction che al QA matcher.
+- Prossimo lavoro: verificare generalizzazione dei gate su Stanford, L25P09,
+  Deep Time e gli altri input disponibili, prima di chiedere altre valutazioni
+  esterne.
+
+### Esito batch locale di generalizzazione v4
+
+Batch locale eseguito su tutti gli input disponibili:
+
+- output batch:
+  `/Users/matteopogetta/Documents/ExerPlazaSample/output/generalization_v4_2026-06-30`
+
+Run generate:
+
+- Deep Time: `2026-06-30_105034_quality_local_structural`
+- Eugenia: `2026-06-30_105037_quality_local_structural`
+- L25P08: `2026-06-30_105038_quality_local_structural`
+- L25P09: `2026-06-30_105039_quality_local_structural`
+- SSL1P1: `2026-06-30_105040_quality_local_structural`
+- Stanford: `2026-06-30_105041_quality_local_structural`
+
+Confronto locale contro la run precedente dello stesso input:
+
+- Deep Time: `3 -> 2`, rimosso `qa_0012`, candidato low-autonomy con risposta
+  lunga e non chiaramente autonoma.
+- Eugenia: `10 -> 10`, invariata rispetto a v4.
+- L25P08: `3 -> 3`, invariato.
+- L25P09: `3 -> 3`, invariato.
+- SSL1P1: `0 -> 0`, invariato.
+- Stanford: `13 -> 12`, rimosso `qa_0010`, candidato
+  `quality_local_deferred` + `competing_question`, localmente gia' a rischio.
+
+Decisione:
+
+- Non servono review esterne su tutto il batch.
+- Le sole review utili per verificare generalizzazione dei gate v4 sono:
+  - Deep Time `2026-06-30_105034_quality_local_structural`;
+  - Stanford `2026-06-30_105041_quality_local_structural`.
+- Se entrambe confermano che i candidati rimossi erano effettivamente deboli,
+  la fase QA guardrail v4 puo' essere considerata abbastanza stabile da
+  spostare il lavoro su context quality / sentence reconstruction, invece di
+  aggiungere altri filtri QA.
+
+### Esito AI review esterna generalizzazione v4
+
+Valutazioni esterne completate su:
+
+- Deep Time `2026-06-30_105034_quality_local_structural`
+- Stanford `2026-06-30_105041_quality_local_structural`
+
+Deep Time:
+
+- candidati `2`;
+- decisioni: `1 reject / 1 revise`;
+- il candidato rimosso dal batch locale (`qa_0012`) non e' piu' presente;
+- resta un falso positivo (`qa_0005`) dovuto a monologo/self-continuation:
+  domanda retorica e risposta nella frase successiva dello stesso flusso
+  discorsivo;
+- root cause indicata dalla review: assenza di speaker-turn awareness per
+  distinguere Q/A reale da continuita' retorica nello stesso parlante.
+
+Stanford:
+
+- score qualita': `4`;
+- runtime value: `4`;
+- candidati `12`;
+- decisioni: `5 keep / 6 revise / 1 reject`;
+- il candidato rimosso dal batch locale (`qa_0010`) era
+  `quality_local_deferred` + `competing_question`, coerente con i gate v4;
+- il profilo locale evita bene i distant/deferred mis-pick, ma non puo'
+  correggere domande malformed o retoriche con risposta adiacente solo
+  topicamente vicina.
+
+Decisione:
+
+- I guardrail QA v4 sono confermati abbastanza stabili:
+  - migliorano Eugenia fino a `0 reject`;
+  - non modificano L25P08/L25P09/SSL1P1;
+  - su Stanford rimuovono un candidato rischioso e mantengono score `4`;
+  - su Deep Time il problema residuo non e' un semplice threshold QA, ma
+    self-continuation senza speaker-turn.
+- Non aggiungere altri filtri QA locali come prossima mossa: il rischio e'
+  overfittare e perdere recall utile.
+- Prossimo tema operativo:
+  1. context quality, per ridurre `weak_context_risk` e contesti fallback;
+  2. sentence reconstruction, per ridurre domande merged/troncate;
+  3. speaker-turn awareness leggera senza diarizzazione, se possibile usando
+     feature gia' disponibili da utterance/sentence continuity.
+
+## 2026-06-30 - Context Quality v1 conservativo
+
+Obiettivo:
+
+- migliorare la leggibilita' del contesto `C` senza cambiare la selezione Q/A;
+- mantenere `quality_local` focalizzato su qualita' Q/A, non su contesto;
+- aggiungere diagnostica compatta per capire come viene scelto il contesto.
+
+Scelte implementative:
+
+- aggiunto un selettore extractive locale per il contesto:
+  - valuta 1-2 unita' vicine alla domanda/risposta;
+  - preferisce setup informativi rispetto a filler/transizioni;
+  - penalizza domande concorrenti quando esiste un'alternativa migliore;
+  - mantiene al massimo 1-2 unita' di contesto.
+- aggiunti in `metadata.context_debug`:
+  - `context_selection_score`;
+  - `context_reasons`;
+  - `candidate_context_count`.
+- non sono stati aggiunti dump candidato-per-candidato in `metrics.json`.
+- regola architetturale confermata:
+  - `session.json` = fonte granulare candidato/debug;
+  - `metrics.json` = aggregati;
+  - review packet = vista leggibile;
+  - niente duplicazione estesa tra livelli.
+
+Correzione importante:
+
+- la prima versione faceva entrare il nuovo context score nei quality gate e
+  cambiava il numero di Q/A emesse;
+- e' stata introdotta una separazione:
+  - contesto nuovo = export/review/debug;
+  - contesto legacy = quality gate, solo per mantenere stabile l'emissione Q/A
+    durante questo ciclo.
+- questa scelta evita che un contesto piu' leggibile promuova candidati Q/A
+  borderline o che un context score piu' severo rimuova Q/A buone.
+
+Test:
+
+- `PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src .venv/bin/python -m unittest tests.test_qa_extractor tests.test_evaluation_run_exporter tests.test_ai_review_packet_exporter`
+  - esito: OK, `75` test.
+- `PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src .venv/bin/python -m unittest discover -s tests`
+  - esito: non completato per problema ambiente su `tests/test_placeholder_cli.py`
+    (`pytest` / `_pytest` import), non legato a Context Quality v1.
+
+Run locale:
+
+- comando:
+  `PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src .venv/bin/python scripts/run_evaluation_batch.py --resume --profiles quality_local --segmentation-mode structural --output-root /Users/matteopogetta/Documents/ExerPlazaSample/output/context_quality_v1_2026-06-30`
+- output batch:
+  `/Users/matteopogetta/Documents/ExerPlazaSample/output/context_quality_v1_2026-06-30`
+
+Run generate da considerare per review:
+
+- Deep Time: `2026-06-30_112736_quality_local_structural`
+- Eugenia: `2026-06-30_112737_quality_local_structural`
+- L25P08: `2026-06-30_112739_quality_local_structural`
+- L25P09: `2026-06-30_112739_quality_local_structural`
+- SSL1P1: `2026-06-30_112740_quality_local_structural`
+- Stanford: `2026-06-30_112742_quality_local_structural`
+
+Verifica locale conteggi contro generalizzazione v4:
+
+- Deep Time: `2 -> 2`
+- Eugenia: `10 -> 10`
+- L25P08: `3 -> 3`
+- L25P09: `3 -> 3`
+- SSL1P1: `0 -> 0`
+- Stanford: `12 -> 12`
+
+Decisione:
+
+- il criterio conservativo e' rispettato: candidate count invariato su tutti i
+  6 input disponibili;
+- ora serve review esterna solo per capire se `context_text` e'
+  effettivamente piu' leggibile/stabile, non per rivalutare la selezione Q/A.
+
+## 2026-07-01 - Context Quality v1 micro-fix dopo recap esterno
+
+Input:
+
+- recap esterno focalizzato su `context_text` delle run `2026-06-30_1127xx`;
+- problemi principali segnalati:
+  - contesti che erano domande concorrenti;
+  - contesti duplicati rispetto alla domanda;
+  - filler/meta come contesto;
+  - frammenti troppo sottili.
+
+Scelte implementate:
+
+- il context selector esportato scarta ora in modo piu' netto:
+  - `competing_question_context`;
+  - `duplicate_question_context`;
+  - `filler_context_candidate`;
+  - `incomplete_context_candidate`;
+  - `thin_context_candidate`.
+- il preambolo della domanda viene usato come contesto solo se e' realmente
+  informativo:
+  - non deve essere domanda;
+  - non deve essere filler/meta;
+  - non deve sembrare incompleto;
+  - deve avere almeno 3 token informativi.
+- per `question_context_expanded`, il contesto precedente resta ammesso solo
+  se non e' esso stesso una domanda duplicata.
+- aggiunti test sintetici per:
+  - domanda concorrente senza setup utile;
+  - contesto che duplica la domanda;
+  - frammento sottile senza setup.
+
+Vincolo architetturale confermato:
+
+- la modifica riguarda solo il contesto esportato/review-facing;
+- il gate Q/A resta stabilizzato tramite il contesto legacy separato;
+- nessun cambio intenzionale al numero di Q/A.
+
+Test:
+
+- `PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src .venv/bin/python -m unittest tests.test_qa_extractor tests.test_evaluation_run_exporter tests.test_ai_review_packet_exporter`
+  - esito: OK, `78` test.
+
+Run generate:
+
+- Deep Time: `2026-07-01_124518_quality_local_structural`
+- Eugenia: `2026-07-01_124520_quality_local_structural`
+- L25P08: `2026-07-01_124521_quality_local_structural`
+- L25P09: `2026-07-01_124522_quality_local_structural`
+- SSL1P1: `2026-07-01_124523_quality_local_structural`
+- Stanford: `2026-07-01_124524_quality_local_structural`
+
+Verifica conteggi contro `2026-06-30_1127xx`:
+
+- Deep Time: `2 -> 2`
+- Eugenia: `10 -> 10`
+- L25P08: `3 -> 3`
+- L25P09: `3 -> 3`
+- SSL1P1: `0 -> 0`
+- Stanford: `12 -> 12`
+
+Effetto sui casi segnalati:
+
+- Deep Time `qa_0005`: sostituita domanda concorrente con setup precedente.
+- Eugenia:
+  - `qa_0029`, `qa_0049`, `qa_0050`: contesto svuotato invece di domanda/filler;
+  - `qa_0004`: rimane solo setup breve, rimossa domanda concorrente;
+  - `qa_0002`: contesto svuotato per evitare filler.
+- L25P08 `qa_0007`: sostituita duplicazione domanda con setup precedente.
+- L25P09 `qa_0012`: sostituito frammento troncato con setup precedente.
+- Stanford:
+  - `qa_0001`, `qa_0028`, `qa_0040`: contesto svuotato invece di filler/domanda;
+  - `qa_0020`: sostituito `these two` con contesto piu' esteso, ancora da
+    verificare qualitativamente.
+
+Decisione:
+
+- il micro-fix e' coerente con l'obiettivo: non migliora Q/A, ma riduce rumore
+  nel C senza cambiare emissione Q/A;
+- per review esterna ora conviene valutare solo i casi rimasti ambigui:
+  - Stanford `qa_0020`;
+  - L25P09 `qa_0012`;
+  - Eugenia `qa_0053`.
+
+## 2026-07-01 - Answer Boundary v1 conservativo
+
+Input:
+
+- review esterna delle run `2026-07-01_1245xx`;
+- il contesto C e' risultato piu' pulito, mentre i problemi residui sono
+  soprattutto Q/A:
+  - risposte troncate;
+  - domande retoriche o embedded;
+  - risposte debolmente responsive.
+
+Obiettivo:
+
+- migliorare solo boundary/completezza della risposta quando esiste gia' una
+  Q/A emessa;
+- non aumentare il numero di candidati;
+- non aggiungere regole basate su esempi reali.
+
+Scelte implementate:
+
+- esteso il detector generico di risposta incompleta:
+  - finali su preposizione/contrazione (`toward`, `towards`, `al`, `alla`,
+    `allo`);
+  - finali sospesi su virgola.
+- rafforzato leggermente il supporto a span multi-unita' quando la prima unita'
+  risposta e' incompleta.
+- aggiunti test sintetici per:
+  - risposta terminata su preposizione;
+  - risposta terminata su virgola.
+
+Tentativo ritirato:
+
+- era stata provata una regola per completare una risposta con il prefisso
+  testuale prima di una domanda concorrente nella stessa frase;
+- migliorava localmente L25P09 `qa_0003`, ma aumentava il numero di candidati:
+  - Eugenia `10 -> 11`;
+  - L25P08 `3 -> 4`;
+  - L25P09 `3 -> 4`.
+- decisione: rollback di quella parte. Il prefisso prima di domanda concorrente
+  e' utile ma non abbastanza sicuro senza un gate piu' forte sulla domanda.
+
+Test:
+
+- `PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src .venv/bin/python -m unittest tests.test_qa_extractor tests.test_evaluation_run_exporter tests.test_ai_review_packet_exporter`
+  - esito: OK, `80` test.
+
+Run generate:
+
+- Deep Time: `2026-07-01_131306_quality_local_structural`
+- Eugenia: `2026-07-01_131308_quality_local_structural`
+- L25P08: `2026-07-01_131310_quality_local_structural`
+- L25P09: `2026-07-01_131310_quality_local_structural`
+- SSL1P1: `2026-07-01_131312_quality_local_structural`
+- Stanford: `2026-07-01_131314_quality_local_structural`
+
+Verifica conteggi contro context-final `2026-07-01_1245xx`:
+
+- Deep Time: `2 -> 2`
+- Eugenia: `10 -> 10`
+- L25P08: `3 -> 3`
+- L25P09: `3 -> 3`
+- SSL1P1: `0 -> 0`
+- Stanford: `12 -> 12`
+
+Esito:
+
+- miglioramento sicuro osservato:
+  - Eugenia `qa_0053`: answer passa da frammento troncato a risposta piu'
+    completa includendo anche la frase successiva sulla category theory/book.
+- L25P09 `qa_0003` resta parzialmente troncata: il completamento richiede
+  usare prefisso prima di una domanda concorrente, che per ora non e' abbastanza
+  sicuro.
+
+Decisione:
+
+- tenere Answer Boundary v1 nella forma conservativa;
+- non proseguire sul prefisso prima di domanda concorrente finche' non esiste
+  un gate piu' robusto per impedire nuovi falsi positivi;
+- prossima linea piu' promettente: ridurre domande retoriche/embedded gia'
+  segnalate dalla review, senza abbassare il recall delle Q/A reali.
+
+## 2026-07-01 - Nuovo input Dialoghi di Scienza EP2: evidenze per prossimo ciclo
+
+Input:
+
+- nuova run `quality_local/structural` su
+  `dialoghi_di_scienza_ep2_dialoghi_di_scienza_ep2_-_astrofisica`;
+- run:
+  `evaluations/dialoghi_di_scienza_ep2_dialoghi_di_scienza_ep2_-_astrofisica/runs/2026-07-01_194132_quality_local_structural`;
+- valutazione esterna AI completata.
+
+Metriche principali:
+
+- run cold reale:
+  - `total_duration_seconds`: `1255.846`;
+  - `transcription`: `1127.509s`;
+  - `alignment`: `117.7s` circa;
+  - `qa_extraction`: costo trascurabile nella review esterna (`0.069s`);
+  - nessun cache hit e nessun artifact reuse.
+- candidati Q/A/C esportati: `7`.
+- segnale AI esterno:
+  - `quality_score`: `3`;
+  - `runtime_value_score`: `2`;
+  - circa `6/7` Q/A semanticamente coerenti.
+- `qa_quality_metrics`:
+  - `final_quality_score.avg`: `0.6995`;
+  - `quality_band_counts`: `1 high`, `6 medium`, `0 low`;
+  - rischi principali:
+    - `competing_question`: `3`;
+    - `embedded_statement_question`: `2`;
+    - `weak_question_form`: `2`;
+  - `answer_responsiveness_score` e' piatto:
+    - `min = avg = median = max = 0.646`.
+
+Osservazioni qualitative:
+
+- Il profilo `quality_local` generalizza meglio su input dialogico/intervista
+  rispetto ai panel monologici:
+  - evita distant/deferred answer catastrofiche;
+  - produce un buon numero di Q/A coerenti anche in italiano;
+  - resta economico nella sola fase di matching Q/A.
+- Il costo freddo non e' causato dal QA extractor ma da trascrizione e
+  alignment. Per valutazioni di qualita' il costo va quindi separato:
+  - costo pipeline end-to-end cold;
+  - costo incrementale della logica Q/A.
+- Il caso peggiore e' `qa_0003`:
+  - domanda: perche' hai cominciato a studiare questa materia;
+  - risposta selezionata: continuazione dell'intervistatore (`Raccontaci un
+    po'...`);
+  - risposta attesa: turno successivo dell'intervistato.
+- Questo introduce una nuova classe d'errore rispetto a L25P08:
+  - non solo domanda debole o frammento;
+  - ma risposta presa dallo stesso flusso di domanda/follow-up invece che dal
+    vero turno responsivo.
+- Diarizzazione disattiva significa che non abbiamo speaker identity affidabile;
+  quindi un eventuale fix deve usare segnali testuali/strutturali conservativi,
+  non una stima fragile del numero speaker.
+
+Decisione per procedere:
+
+- Non aggiungere routing per tipo contenuto.
+- Non introdurre regole su frasi reali o casi specifici.
+- Il prossimo ciclo dovrebbe restare dentro `quality_local` e lavorare su:
+  - `answer_responsiveness` piu' discriminante;
+  - penalita' per risposte che sembrano follow-up della domanda invece che
+    risposta;
+  - uso conservativo di `competing_question`/`weak_question_form` quando la
+    risposta ha solo overlap o cue superficiali;
+  - cleanup boundary per trailing token e risposte troncate, senza aumentare il
+    numero di candidati.
+- Il fatto che `answer_responsiveness_score` sia identico su tutti i candidati
+  (`0.646`) e' un segnale tecnico: la feature diagnostica non sta separando
+  abbastanza i casi buoni dai falsi positivi, quindi va resa piu' informativa
+  prima di usarla come gate piu' forte.
+
+## 2026-07-01 - Follow-up prompt e classroom check-in guardrails
+
+Contesto:
+
+- La revisione umana ha evidenziato falsi positivi in L25P08:
+  - una domanda espansa con check-in di classe dentro il testo domanda;
+  - una risposta gestionale/di supporto scambiata per risposta didattica.
+- Il nuovo input `Dialoghi di Scienza EP2 - Astrofisica` ha introdotto un'altra
+  classe d'errore:
+  - la risposta selezionata era ancora un follow-up dell'intervistatore, non il
+    vero turno responsivo.
+- Vincolo mantenuto:
+  - nessuna regola basata su frasi reali dei casi;
+  - solo pattern strutturali generici;
+  - nessun nuovo ramo pipeline, profilo o file di export.
+
+Scelte implementate:
+
+- `answer_responsiveness` ora conserva nel debug un `raw_score_delta` non
+  saturato, cosi' `answer_responsiveness_score` non resta piatto a `0.646` su
+  candidati qualitativamente diversi.
+- Aggiunti nel debug:
+  - `raw_score_delta`;
+  - `shared_keyword_count`;
+  - `shared_number_count`;
+  - `followup_prompt_answer`.
+- La parte usata nel ranking resta conservativa tramite `score_delta` clampato,
+  mentre la diagnostica e i quality feature possono distinguere meglio i casi.
+- Aggiunto reason/flag/risk `followup_prompt_answer` quando una risposta sembra
+  una richiesta a un altro parlante di rispondere, non una risposta.
+- In `quality_local`, `followup_prompt_answer` viene scartato solo se combinato
+  con segnali di rischio come `competing_question`, `weak_question_form`,
+  `embedded_statement_question` o quality score non abbastanza alto.
+- Estesi i token interrogativi italiani esclusi dall'overlap di contenuto
+  (`perche`, `dove`, `quanto`, ecc.), per evitare che cue di domanda diventino
+  falsi anchor semantici.
+- Esteso il rilevamento generico di classroom/backchannel check-in:
+  - include il caso "following/seguendo";
+  - viene applicato anche dopo `question_context_expansion`, per intercettare
+    check-in presenti nel contesto espanso della domanda.
+
+Test:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src .venv/bin/python -m unittest tests.test_qa_extractor tests.test_evaluation_run_exporter tests.test_ai_review_packet_exporter
+```
+
+Risultato:
+
+- `83` test OK.
+
+Run locali:
+
+- L25P08:
+  - nuova run `2026-07-01_195915_quality_local_structural`;
+  - candidati `3 -> 2`;
+  - rimosso solo `qa_0007`, il falso positivo con classroom check-in;
+  - nessun candidato aggiunto.
+- Dialoghi di Scienza EP2 - Astrofisica:
+  - nuova run `2026-07-01_195938_quality_local_structural` sotto label
+    `dialoghi_di_scienza_ep2_-_astrofisica`;
+  - candidati `7 -> 6` rispetto alla review precedente;
+  - rimosso solo `qa_0003`, il falso positivo in cui la risposta era un
+    follow-up dell'intervistatore;
+  - nessun candidato aggiunto.
+
+Decisione:
+
+- Questo micro-ciclo e' coerente con l'obiettivo di migliorare precisione Q/A
+  senza overfitting:
+  - intercetta due classi d'errore osservate su input diversi;
+  - non usa frasi reali come trigger;
+  - non modifica schema pubblico o profili;
+  - non aumenta il recall di falsi positivi.
+- Serve valutazione esterna mirata sulle due nuove run:
+  - `l25p08/2026-07-01_195915_quality_local_structural`;
+  - `dialoghi_di_scienza_ep2_-_astrofisica/2026-07-01_195938_quality_local_structural`.
+
+### Esito AI review esterna follow-up/check-in guardrails
+
+Valutazioni esterne completate su:
+
+- L25P08 `2026-07-01_195915_quality_local_structural`;
+- Dialoghi di Scienza EP2 `2026-07-01_195938_quality_local_structural`.
+
+L25P08:
+
+- score qualita': `3`;
+- runtime value: `4`, ma run warm/reuse;
+- candidati: `2`;
+- il falso positivo umano `qa_0007` e' stato rimosso;
+- resta un candidato debole:
+  - `qa_0012`, dichiarativo/frammento con cue interrogativo, giudicato `revise`
+    dalla review esterna;
+  - root cause: falso riconoscimento di domanda su frammento dichiarativo
+    mid-sentence.
+
+Dialoghi di Scienza EP2:
+
+- score qualita': `3`;
+- runtime value: `4`, ma run warm/reuse;
+- candidati: `6`;
+- il falso positivo `qa_0003` e' stato rimosso;
+- candidati migliori confermati:
+  - `qa_0013` definizione di cosmologia numerica;
+  - `qa_0015` piramide delle scienze/fisica fondamentale.
+- resta un reject chiaro:
+  - `qa_0022`, domanda eco/garbled derivata da testo della risposta precedente
+    e risposta tangenziale.
+- altri candidati sono `revise`, non reject, soprattutto per domanda
+  dichiarativa o embedded ma risposta utile.
+
+Decisione:
+
+- Il micro-ciclo e' confermato:
+  - rimuove i due falsi positivi mirati;
+  - non aggiunge candidati;
+  - non introduce una regressione evidente nelle review.
+- La prossima classe d'errore generalizzabile non e' piu' follow-up/check-in,
+  ma:
+  1. pseudo-domande dichiarative che iniziano con cue interrogativo ma non hanno
+     vera forma interrogativa;
+  2. echo/riuso di una risposta precedente come nuova domanda, specialmente con
+     testa garbled o molto breve.
+- Intervento consigliato:
+  - prima un gate conservativo su question form/echo, non un allargamento del
+    contesto e non diarizzazione;
+  - mantenere i candidati `revise` utili quando la risposta e' didatticamente
+    buona, quindi evitare soglie troppo aggressive su tutte le domande embedded.
+
+## 2026-07-01 - Question-form / echo guardrails v1
+
+Contesto:
+
+- Dopo la review esterna del micro-ciclo follow-up/check-in, restavano:
+  - L25P08 `qa_0012`: pseudo-domanda implicita quantitativa senza vera risposta
+    quantitativa;
+  - Dialoghi `qa_0022`: domanda contestuale espansa con testa molto corta,
+    boundary rischioso e competing question.
+- Obiettivo:
+  - rimuovere solo questi falsi positivi strutturali;
+  - non scartare i `revise` utili in cui la risposta e' didatticamente valida;
+  - non introdurre regole su frasi reali.
+
+Scelte implementate:
+
+- Aggiunta risk reason `weak_implicit_quantity_question`:
+  - attiva solo quando coesistono:
+    - domanda senza `?`;
+    - `implicit_question_cue`;
+    - `answer_responsiveness_quantity_missing`;
+    - nessun didactic cue;
+    - `question_score <= 0.53`;
+    - overlap lessicale minimo (`keyword_overlap <= 0.05`).
+  - In `quality_local` scarta solo se `final_quality_score < 0.78`.
+- Aggiunta risk reason `weak_expanded_contextual_question`:
+  - attiva solo quando coesistono:
+    - `question_context_expanded`;
+    - testa domanda molto corta (`token_count <= 2`);
+    - sentence quality penalty;
+    - merge safety penalty;
+    - `competing_question_nearby`.
+  - In `quality_local` scarta solo se c'e' anche `competing_question` e
+    `final_quality_score < 0.76`.
+- Le nuove feature restano diagnostiche nel candidato e aggregate in
+  `quality_features`; nessun nuovo file o cambio schema pubblico.
+
+Test:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src .venv/bin/python -m unittest tests.test_qa_extractor tests.test_evaluation_run_exporter tests.test_ai_review_packet_exporter
+```
+
+Risultato:
+
+- `85` test OK.
+
+Run locali:
+
+- L25P08:
+  - nuova run `2026-07-01_200929_quality_local_structural`;
+  - confronto contro `2026-07-01_195915_quality_local_structural`;
+  - candidati `2 -> 1`;
+  - rimosso solo `qa_0012`;
+  - resta `qa_0011`, gia' giudicato `keep`.
+- Dialoghi di Scienza EP2:
+  - nuova run `2026-07-01_200939_quality_local_structural`;
+  - confronto contro `2026-07-01_195938_quality_local_structural`;
+  - candidati `6 -> 5`;
+  - rimosso solo `qa_0022`;
+  - restano i keep e i revise utili (`qa_0013`, `qa_0014`, `qa_0015`,
+    `qa_0021`, `qa_0029`).
+
+Decisione:
+
+- Il risultato locale e' pulito: nessun candidato aggiunto e rimossi solo i
+  falsi positivi esplicitamente indicati dalla review.
+- Serve review esterna mirata sulle due nuove run per confermare:
+  - L25P08 dovrebbe passare a un set di precisione alta ma yield basso;
+  - Dialoghi dovrebbe perdere il reject residuo mantenendo i revise utili.
+
+## 2026-07-02 - Recall intra-frase socratico v1
+
+Contesto:
+
+- La review umana sulle run `2026-07-01_200929` e `2026-07-01_200939`
+  ha evidenziato un problema diverso dai falsi positivi precedenti:
+  precisione migliorata, ma recall troppo basso.
+- Casi mancati ricorrenti:
+  - domande didattiche brevi con risposta immediata nella stessa frase o nella
+    frase successiva;
+  - risposte con tag finale di conferma (`right?`, `vero?`) scambiate per
+    risposte-domanda;
+  - risposte causali che iniziano con `perche/because` scambiate per nuove
+    domande concorrenti;
+  - domande espanse con contesto precedente che nascondevano il focus breve
+    originale.
+
+Scelte implementate:
+
+- Aggiunto trimming conservativo dei tag finali nelle risposte:
+  - rimuove solo tag brevi di conferma quando prima esiste un corpo risposta
+    sostanziale;
+  - reason code: `answer_trailing_tag_trimmed`.
+- Rafforzato il riconoscimento di completamenti socratici brevi:
+  - supporta domande object-gap come `what do we obtain?`, `cosa ottengo?` e
+    terminal-object come `calculate what?`;
+  - usa anche il focus originale salvato in
+    `question.metadata["normalized_question_text"]` quando la domanda esportata
+    viene espansa col contesto;
+  - evita completamenti troppo tronchi che aggiungono solo un numero nudo.
+- In `quality_local`, aggiunto un bypass molto stretto del gate per
+  completamenti socratici locali:
+  - solo risposta stessa frase o frase successiva;
+  - richiede overlap/ancoraggio e `socratic_short_answer_support`;
+  - esclusi answer-question, poll/backchannel e risposte con `?`.
+- Ranking:
+  - se esiste un completamento socratico same-unit valido, viene preferito a una
+    continuazione successiva piu' lunga ma meno diretta.
+- Risposte causali:
+  - una frase senza `?` che inizia con `perche/because` puo' essere answer-like
+    se e' locale/adiacente a una why-question;
+  - la penalita' `surface_answer_cue_penalty` non si applica a una why-answer
+    locale e causale.
+
+Risultati locali:
+
+- Test mirati + exporter:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src .venv/bin/python -m unittest tests.test_qa_extractor tests.test_evaluation_run_exporter tests.test_ai_review_packet_exporter
+```
+
+- Risultato: `92` test OK.
+- Run L25P08:
+  - nuova run `2026-07-02_102617_quality_local_structural`;
+  - candidati `1 -> 7` rispetto a `2026-07-01_200929`;
+  - recuperati i casi umani principali:
+    - `e poi fare cosa?` -> `Fare l'integrale.`;
+    - `cosa ottengo?` -> `Ottengo seno al quadrato di omega t`;
+    - `cosa ottengo?` -> `Ottengo infinito.`;
+  - rischio residuo: alcuni candidati sono `medium_confidence`,
+    `competing_question` o `low_sentence_autonomy`, quindi serve review esterna.
+- Run Dialoghi:
+  - nuova run `2026-07-02_102629_quality_local_structural`;
+  - candidati restano `5`;
+  - recupero iniziale del cluster intervista non ancora risolto.
+
+Decisione:
+
+- Questa patch va valutata esternamente soprattutto su L25P08, dove il recall
+  aumenta in modo sostanziale.
+- Non forzare ancora il recupero del pattern intervista
+  domanda-domanda-prompt-eco-risposta: e' una linea separata, piu' rischiosa,
+  da progettare come micro-ciclo dedicato.
+
+## 2026-07-02 - Interview cluster v1 senza diarizzazione
+
+Contesto:
+
+- Review esterna della run Dialoghi `2026-07-02_102629_quality_local_structural`:
+  - qualita' complessiva ancora `3/2`, ma recall giudicato fallimentare;
+  - diversi candidati rimasti erano pseudo-domande dichiarative con tag o frasi
+    causali;
+  - mancava il cluster iniziale domanda/follow-up/prompt/eco/risposta.
+- L25P08 `2026-07-02_102617_quality_local_structural` invece e' stato
+  giudicato miglioramento valido: il profilo monologico/socratico e' ora utile.
+
+Scelte implementate:
+
+- Precisione su pseudo-domande:
+  - frasi causali dichiarative senza `?` non diventano domande;
+  - frasi causali/esistenziali con tag finale (`right?`, `no?`) vengono
+    trattate come tag retorici anche se iniziano con cue interrogativo.
+- Recupero interview cluster:
+  - il searcher locale puo' creare un candidato
+    `interview_cluster_search` quando una domanda e' seguita da una catena
+    breve di:
+    - follow-up question;
+    - prompt non-question tipo `tell us...` / `raccontaci...`;
+    - eco della domanda;
+    - prima risposta sostanziale;
+  - la catena deve contenere almeno un prompt o una eco, quindi una normale
+    domanda concorrente continua a fermare la ricerca precedente.
+- Recupero echo question:
+  - una domanda breve che ripete una domanda precedente dopo un prompt puo'
+    passare con risposta narrativa locale anche senza forte overlap lessicale;
+  - questo resta limitato a `quality_local` e richiede risposta non-question,
+    qualita' minima e niente poll/follow-up answer.
+
+Test:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src .venv/bin/python -m unittest tests.test_qa_extractor tests.test_evaluation_run_exporter tests.test_ai_review_packet_exporter
+```
+
+Risultato:
+
+- `95` test OK.
+
+Run locali:
+
+- Dialoghi:
+  - nuova run `2026-07-02_161919_quality_local_structural`;
+  - candidati `5 -> 4` rispetto a `2026-07-02_102629`;
+  - recuperata una Q/A iniziale reale:
+    - `Perché hai fatto astro fisica?` ->
+      `Ebbene ci sono dei malati di mente... passione...`;
+  - rimosse pseudo-domande dichiarative:
+    - causale su esperimento/cosmologia;
+    - tag retorico su piramide/scienze.
+- L25P08 controllo regressione:
+  - nuova run `2026-07-02_161950_quality_local_structural`;
+  - candidati restano `7`;
+  - i recuperi socratici principali restano presenti.
+
+Decisione:
+
+- Mandare a review esterna solo Dialoghi `2026-07-02_161919`.
+- Non dichiarare risolto il recall interview:
+  - restano non recuperati alcuni pattern diversi:
+    - domanda trascritta come dichiarativa senza `?` (`sinonimo`);
+    - domanda spezzata su piu' frasi (`quali lavori`);
+    - domanda lunga/run-on con risposta lontana (`senso della bellezza`).
+- Prossimo micro-ciclo, se la review conferma la direzione:
+  - boundary/focus recovery per domande spezzate e run-on,
+    non ulteriore allargamento generico della finestra.
+
+## 2026-07-02 - Interview precision cleanup v1
+
+Contesto:
+
+- Review esterna di Dialoghi `2026-07-02_161919_quality_local_structural`:
+  - punteggio `2/2`;
+  - recupero iniziale utile ma risposta troncata;
+  - `qa_0014` era misattribuzione: continuazione della domanda presa come
+    risposta;
+  - `qa_0034` era frammento retorico/embedded da scartare;
+  - recall ancora fallimentare.
+
+Scelte implementate:
+
+- Estensione answer span prima di una domanda concorrente:
+  - se una risposta e' seguita da un prefisso dichiarativo sostanziale prima di
+    una nuova domanda, viene creato un candidato combinato;
+  - prefissi troppo brevi vengono esclusi per evitare frammenti tipo
+    continuazioni incomplete.
+- Penalita' `question_continuation_answer_penalty`:
+  - risposta che inizia con marker di chiarimento (`cioe`, `that is`, ecc.) e
+    contiene ancora cue interrogativo/condizionale viene trattata come
+    continuazione della domanda, non risposta.
+- Gate `quality_local`:
+  - scarta embedded statement question con confidenza non alta, salvo eco
+    intervista gia' marcata;
+  - ammette estensione prima di competing question solo con qualita' minima.
+
+Test:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src .venv/bin/python -m unittest tests.test_qa_extractor tests.test_evaluation_run_exporter tests.test_ai_review_packet_exporter
+```
+
+Risultato:
+
+- `98` test OK.
+
+Run locale:
+
+- Dialoghi nuova run `2026-07-02_164424_quality_local_structural`;
+- candidati `4 -> 2` rispetto a `2026-07-02_161919`;
+- rimossi:
+  - misattribuzione su triennale/astronomia-vs-astrofisica;
+  - frammento retorico `voi andate avanti perche?`;
+- restano:
+  - Q/A iniziale su scelta/passione;
+  - Q/A forte su cosmologia numerica.
+
+Decisione:
+
+- Non mandare `2026-07-02_164424` a review esterna come candidato finale:
+  - e' un checkpoint di precisione, utile per capire gli errori;
+  - il recall resta troppo basso.
+- Prossima linea: boundary/focus recovery per:
+  - domande spezzate su piu' frasi;
+  - domande lunghe/run-on con risposta nella frase successiva;
+  - domande trascritte senza `?` ma con struttura interrogativa chiara.
+
+## 2026-07-03 - Regola fixture test QA astratte
+
+Contesto:
+
+- E stata rilevata nei test QA una fixture con frasi naturalistiche in inglese, ad esempio una domanda sul motivo della scelta di un topic e una risposta su interesse personale.
+- Quelle stringhe erano input sintetici di unit test, non regole di produzione e non venivano usate dal runtime per riconoscere Q/A.
+- La forma era comunque ambigua per il progetto: anche i test devono evitare esempi realistici che sembrino derivati da casi valutati o che possano suggerire overfitting linguistico.
+
+Regola di progetto:
+
+- Le fixture testuali dei test QA devono usare marker astratti (`marker alpha`, `response beta`, ecc.) o formulazioni chiaramente sintetiche.
+- Non inserire nel codice frasi prese da transcript reali, review umane, output AI esterni o esempi narrativi troppo specifici.
+- I test devono verificare strutture e comportamenti generali, non memorizzare casi concreti.
+
+Modifica:
+
+- Sostituite le fixture naturalistiche recenti in `tests/test_qa_extractor.py` con testi markerizzati.
+- Mantenuta la copertura dei comportamenti: cluster intervista, causal declarative rejection, tag retorico, estensione risposta prima di domanda concorrente, continuation answer rejection, embedded rhetorical fragment rejection.
+
+Test:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src .venv/bin/python -m unittest tests.test_qa_extractor tests.test_evaluation_run_exporter tests.test_ai_review_packet_exporter
+```
+
+Risultato:
+
+- `98` test OK.

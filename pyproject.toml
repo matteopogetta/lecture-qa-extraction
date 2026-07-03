@@ -13,6 +13,7 @@ authors = [
 ]
 dependencies = [
   "openpyxl>=3.1,<4",
+  "wtpsplit>=2.2,<3",
 ]
 
 [project.optional-dependencies]

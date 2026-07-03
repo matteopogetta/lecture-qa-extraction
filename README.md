@@ -152,7 +152,9 @@ Use `--pipeline-profile quality` to evaluate semantic QA with alignment but
 without diarization. Use `--pipeline-profile quality_local` to measure guarded
 local QA without semantic retrieval/reranking cost. The local QA guardrails
 filter low-information classroom check-ins, numeric polls, fragment questions,
-question-like answers, same-sentence echoes, and weak distant deferred answers.
+question-like answers, same-sentence echoes, weak distant deferred answers,
+low-autonomy question fragments, thin context, weak answer responsiveness, and
+same-speaker/self-continuation risks.
 
 Compare saved local evaluation runs for one input:
 
@@ -241,7 +243,7 @@ Depending on enabled branches, the real pipeline may also require:
 
 - WhisperX-compatible runtime dependencies for alignment
 - `pyannote.audio` for diarization
-- `wtpsplit` for the preferred sentence splitter
+- `wtpsplit` for the quality sentence splitter; quality runs fail clearly if it is requested but unavailable
 - `openpyxl` for debug Excel export
 - semantic-model dependencies for semantic QA branches
 

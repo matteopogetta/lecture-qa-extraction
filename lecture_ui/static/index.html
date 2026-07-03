@@ -1,0 +1,852 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Lecture QA Viewer</title>
+<style>
+  :root{
+    --bg:#0f1420; --panel:#161d2c; --panel-2:#1c2536; --line:#28324a;
+    --text:#e7ecf5; --muted:#93a0b8; --faint:#5f6d86;
+    --accent:#4da3ff; --accent-2:#38d39f; --warn:#f0b04a; --bad:#f0736a;
+    --chip:#233049; --shadow:0 6px 24px rgba(0,0,0,.35);
+    --hi:#233a5e; --hi-line:#4da3ff; --ctx:#a982f0;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0; background:var(--bg); color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    font-size:15px; line-height:1.5;
+    display:flex; flex-direction:column; height:100vh; overflow:hidden;
+  }
+  button{font-family:inherit}
+  .accent{color:var(--accent)}
+
+  /* Header */
+  header{
+    flex:0 0 auto; display:flex; align-items:center; gap:14px;
+    padding:10px 18px; background:var(--panel); border-bottom:1px solid var(--line);
+    z-index:20;
+  }
+  header h1{font-size:15px; font-weight:600; margin:0; white-space:nowrap; letter-spacing:.2px}
+  header h1 .dot{color:var(--accent-2)}
+  .picker{display:flex; align-items:center; gap:8px; flex:1; min-width:0}
+  .picker input[type=search]{
+    flex:1; min-width:120px; max-width:520px; background:var(--panel-2); color:var(--text);
+    border:1px solid var(--line); border-radius:8px; padding:8px 10px; font-size:13px;
+  }
+  select#sessionSelect{
+    flex:2; min-width:200px; background:var(--panel-2); color:var(--text);
+    border:1px solid var(--line); border-radius:8px; padding:8px 10px; font-size:13px;
+  }
+  .btn{
+    background:var(--panel-2); color:var(--text); border:1px solid var(--line);
+    border-radius:8px; padding:8px 12px; font-size:13px; cursor:pointer; white-space:nowrap;
+  }
+  .btn:hover{border-color:var(--accent); color:#fff}
+  .btn.primary{background:var(--accent); border-color:var(--accent); color:#06203c; font-weight:600}
+  .btn.primary:hover{filter:brightness(1.08)}
+  .btn:disabled{opacity:.5; cursor:not-allowed}
+
+  /* Main */
+  main{flex:1 1 auto; display:grid; grid-template-columns: 1fr 400px; min-height:0}
+  .col{min-height:0; display:flex; flex-direction:column; overflow:hidden}
+  .col.transcript{border-right:1px solid var(--line)}
+  .col-head{
+    flex:0 0 auto; padding:10px 16px; border-bottom:1px solid var(--line);
+    display:flex; align-items:center; gap:10px; background:var(--panel);
+    font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:.6px;
+  }
+  .col-head .spacer{flex:1}
+  .toggle{display:flex; align-items:center; gap:6px; text-transform:none; letter-spacing:0; color:var(--muted); cursor:pointer; font-size:12px}
+  .scroll{flex:1 1 auto; overflow-y:auto; padding:14px 16px 30px}
+  .scroll::-webkit-scrollbar{width:10px}
+  .scroll::-webkit-scrollbar-thumb{background:#2a3550; border-radius:6px}
+
+  /* Transcript */
+  .sentence{
+    padding:7px 10px; border-radius:8px; margin:2px 0; cursor:pointer;
+    border-left:3px solid transparent; transition:background .12s;
+  }
+  .sentence:hover{background:#182238}
+  .sentence .spk{font-size:11px; color:var(--faint); margin-right:8px; font-weight:600}
+  .sentence .ts{font-size:11px; color:var(--faint); margin-right:8px; font-variant-numeric:tabular-nums}
+  .sentence.active{background:var(--hi); border-left-color:var(--hi-line)}
+  .sentence.q-hi{background:#2a2440; border-left-color:var(--warn)}
+  .sentence.a-hi{background:#1f3320; border-left-color:var(--accent-2)}
+  .sentence.c-hi{background:#2a2140; border-left-color:var(--ctx)}
+  .sentence .flagdot{display:inline-block; width:7px; height:7px; border-radius:50%; margin-left:6px; vertical-align:middle}
+  .flagdot.high{background:var(--bad)} .flagdot.medium{background:var(--warn)} .flagdot.low{background:var(--faint)}
+
+  /* QA list */
+  .qa-card{
+    background:var(--panel-2); border:1px solid var(--line); border-radius:10px;
+    padding:11px 12px; margin-bottom:10px; cursor:pointer; transition:border-color .12s, transform .06s;
+  }
+  .qa-card:hover{border-color:var(--accent)}
+  .qa-card.active{border-color:var(--accent); box-shadow:0 0 0 1px var(--accent) inset}
+  .qa-card .q{font-weight:600; margin-bottom:4px}
+  .qa-card .a{color:var(--muted); font-size:13.5px}
+  .qa-card .meta{display:flex; align-items:center; gap:8px; margin-top:8px; flex-wrap:wrap}
+  .conf{font-size:11px; padding:2px 7px; border-radius:20px; font-weight:600}
+  .conf.high{background:rgba(56,211,159,.16); color:var(--accent-2)}
+  .conf.medium{background:rgba(240,176,74,.16); color:var(--warn)}
+  .conf.low{background:rgba(240,115,106,.16); color:var(--bad)}
+  .conf.unknown{background:var(--chip); color:var(--muted)}
+  .qtype{font-size:11px; color:var(--muted); background:var(--chip); padding:2px 7px; border-radius:20px}
+  .tstamp{font-size:11px; color:var(--faint); font-variant-numeric:tabular-nums; margin-left:auto}
+
+  /* QA detail */
+  .detail{padding:16px}
+  .detail .back{margin-bottom:14px}
+  .detail .block{margin-bottom:16px}
+  .detail .label{font-size:11px; text-transform:uppercase; letter-spacing:.6px; color:var(--faint); margin-bottom:5px}
+  .detail .qtext{font-size:17px; font-weight:600; line-height:1.4}
+  .detail .atext{font-size:15px}
+  .detail .ctext{font-size:13.5px; color:var(--muted); border-left:2px solid var(--line); padding-left:10px}
+  .kv{display:flex; flex-wrap:wrap; gap:8px}
+  .chip{font-size:11.5px; background:var(--chip); color:var(--muted); padding:3px 9px; border-radius:20px}
+  .chip.flag{background:rgba(240,176,74,.14); color:var(--warn)}
+  .confbar{height:8px; background:var(--chip); border-radius:6px; overflow:hidden; margin-top:6px}
+  .confbar > i{display:block; height:100%; border-radius:6px}
+  .jump-row{display:flex; gap:8px; margin:14px 0}
+  details.codes{margin-top:6px}
+  details.codes summary{cursor:pointer; color:var(--muted); font-size:12px}
+  details.codes .kv{margin-top:8px}
+
+  .empty{color:var(--muted); text-align:center; margin-top:60px; padding:0 30px}
+  .empty h2{font-weight:600; color:var(--text)}
+  .empty code{background:var(--panel-2); padding:2px 6px; border-radius:5px; font-size:13px}
+
+  /* Footer / player */
+  footer{
+    flex:0 0 auto; background:var(--panel); border-top:1px solid var(--line);
+    padding:8px 16px 10px; z-index:20;
+  }
+  .timeline-wrap{position:relative; height:40px; margin:2px 0 8px}
+  .timeline{
+    position:absolute; left:0; right:0; top:14px; height:12px; background:var(--panel-2);
+    border:1px solid var(--line); border-radius:6px; cursor:pointer; overflow:hidden;
+  }
+  .seg-band{position:absolute; top:0; bottom:0; background:rgba(77,163,255,.07); border-right:1px solid rgba(77,163,255,.18)}
+  .played{position:absolute; left:0; top:0; bottom:0; background:rgba(77,163,255,.22)}
+  .playhead{position:absolute; top:8px; width:2px; height:24px; background:#fff; box-shadow:0 0 4px rgba(0,0,0,.6); pointer-events:none}
+  .qa-marker{
+    position:absolute; top:8px; width:10px; height:24px; margin-left:-5px; cursor:pointer;
+    display:flex; justify-content:center;
+  }
+  .qa-marker > i{width:2px; height:100%; background:var(--warn); border-radius:2px}
+  .qa-marker.high > i{background:var(--accent-2)} .qa-marker.medium > i{background:var(--warn)} .qa-marker.low > i{background:var(--bad)}
+  .qa-marker:hover > i{width:4px}
+  .qa-marker.active > i{width:4px; box-shadow:0 0 6px currentColor}
+  .qa-marker.high{color:var(--accent-2)} .qa-marker.medium{color:var(--warn)} .qa-marker.low{color:var(--bad)}
+
+  .controls{display:flex; align-items:center; gap:14px}
+  .controls audio{flex:1; height:38px}
+  .clock{font-variant-numeric:tabular-nums; color:var(--muted); font-size:13px; min-width:120px; text-align:right}
+  .nowplaying{font-size:12px; color:var(--faint); flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  .rate{display:flex; align-items:center; gap:4px; font-size:12px; color:var(--muted)}
+  .rate select{background:var(--panel-2); color:var(--text); border:1px solid var(--line); border-radius:6px; padding:3px 5px}
+
+  .badge{font-size:11px; color:var(--muted); background:var(--chip); padding:2px 8px; border-radius:20px}
+
+  /* Analyze modal */
+  .overlay{position:fixed; inset:0; background:rgba(6,10,18,.66); display:flex; align-items:center; justify-content:center; z-index:60}
+  .modal{background:var(--panel); border:1px solid var(--line); border-radius:14px; width:min(680px,94vw); max-height:90vh; overflow:auto; box-shadow:var(--shadow)}
+  .modal .mhead{display:flex; align-items:center; padding:14px 18px; border-bottom:1px solid var(--line)}
+  .modal .mhead h2{margin:0; font-size:16px; font-weight:600} .modal .mhead .spacer{flex:1}
+  .modal .mbody{padding:18px}
+  .drop{border:2px dashed var(--line); border-radius:12px; padding:26px; text-align:center; color:var(--muted); cursor:pointer; transition:border-color .15s,background .15s}
+  .drop.hot{border-color:var(--accent); background:#152238; color:var(--text)}
+  .drop b{color:var(--text)}
+  .filelist{margin:12px 0 4px; display:flex; flex-direction:column; gap:6px}
+  .fileitem{display:flex; align-items:center; gap:8px; background:var(--panel-2); border:1px solid var(--line); border-radius:8px; padding:6px 10px; font-size:13px}
+  .fileitem .rm{margin-left:auto; cursor:pointer; color:var(--faint)} .fileitem .rm:hover{color:var(--bad)}
+  .opts{display:grid; grid-template-columns:1fr 1fr; gap:12px 16px; margin-top:16px}
+  .opt{display:flex; flex-direction:column; gap:5px}
+  .opt label{font-size:12px; color:var(--muted)}
+  .opt input[type=text], .opt select{background:var(--panel-2); color:var(--text); border:1px solid var(--line); border-radius:8px; padding:8px 10px; font-size:13px}
+  .opt.check{flex-direction:row; align-items:center; gap:8px}
+  .opt.check label{color:var(--text); font-size:13px}
+  .opt .hint{font-size:11px; color:var(--faint)}
+  .modal .mfoot{display:flex; gap:10px; padding:14px 18px; border-top:1px solid var(--line); align-items:center}
+  .modal .mfoot .spacer{flex:1}
+  /* progress steps */
+  .steps{display:flex; flex-direction:column; gap:2px; margin-top:6px}
+  .step{display:flex; align-items:center; gap:10px; padding:7px 6px; border-radius:8px; font-size:13.5px}
+  .step .ico{width:20px; height:20px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:12px; flex:0 0 auto; border:1px solid var(--line); color:var(--faint)}
+  .step.pending{color:var(--faint)}
+  .step.running{color:var(--text)} .step.running .ico{border-color:var(--accent); color:var(--accent); animation:spin 1s linear infinite}
+  .step.done{color:var(--text)} .step.done .ico{background:var(--accent-2); border-color:var(--accent-2); color:#06231a}
+  .step.skipped{color:var(--faint)} .step.skipped .ico{color:var(--faint)}
+  .step.failed .ico{background:var(--bad); border-color:var(--bad); color:#2a0d0b}
+  .step .dur{margin-left:auto; font-size:11px; color:var(--faint); font-variant-numeric:tabular-nums}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .logbox{margin-top:14px; background:#0b0f18; border:1px solid var(--line); border-radius:8px; padding:8px 10px; font-family:ui-monospace,Menlo,monospace; font-size:11.5px; color:var(--muted); max-height:150px; overflow:auto; white-space:pre-wrap}
+  .errbox{margin-top:12px; background:rgba(240,115,106,.12); border:1px solid var(--bad); color:#ffd7d3; border-radius:8px; padding:10px 12px; font-size:13px}
+  .hidden{display:none !important}
+  .tooltip{
+    position:fixed; background:#000d; color:#fff; padding:6px 9px; border-radius:6px; font-size:12px;
+    pointer-events:none; max-width:280px; z-index:50; border:1px solid var(--line);
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1><span class="dot">&#9679;</span> Lecture QA Viewer</h1>
+  <div class="picker">
+    <input type="search" id="filter" placeholder="Filtra sessioni..." autocomplete="off" />
+    <select id="sessionSelect"><option value="">Caricamento sessioni...</option></select>
+    <button class="btn primary" id="loadBtn">Apri</button>
+    <button class="btn" id="newBtn" title="Analizza una nuova registrazione">+ Nuova analisi</button>
+    <button class="btn" id="exportBtn" disabled title="Scarica il session.json">JSON</button>
+  </div>
+</header>
+
+<main>
+  <section class="col transcript">
+    <div class="col-head">
+      <span>Transcript</span>
+      <span class="badge" id="sentCount">0 frasi</span>
+      <span class="spacer"></span>
+      <label class="toggle"><input type="checkbox" id="autoscroll" checked /> Auto-scroll</label>
+    </div>
+    <div class="scroll" id="transcript">
+      <div class="empty" id="transcriptEmpty">
+        <h2>Nessuna sessione caricata</h2>
+        <p>Scegli un <code>session.json</code> dall'elenco in alto e premi <b>Apri</b>.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="col qapanel">
+    <div class="col-head">
+      <span id="qaHeadLabel">Q&amp;A</span>
+      <span class="badge" id="qaCount">0</span>
+      <span class="spacer"></span>
+      <span class="badge" id="sessBadge"></span>
+    </div>
+    <div class="scroll" id="qaList"></div>
+    <div class="scroll hidden" id="qaDetail"></div>
+  </section>
+</main>
+
+<footer>
+  <div class="timeline-wrap">
+    <div class="timeline" id="timeline">
+      <div class="played" id="played"></div>
+    </div>
+    <div class="playhead" id="playhead" style="left:0"></div>
+  </div>
+  <div class="controls">
+    <audio id="audio" controls preload="metadata"></audio>
+    <div class="rate">Vel.
+      <select id="rate">
+        <option value="0.75">0.75x</option>
+        <option value="1" selected>1x</option>
+        <option value="1.25">1.25x</option>
+        <option value="1.5">1.5x</option>
+        <option value="2">2x</option>
+      </select>
+    </div>
+    <div class="clock"><span id="cur">0:00</span> / <span id="dur">0:00</span></div>
+  </div>
+  <div class="nowplaying" id="nowplaying"></div>
+</footer>
+
+
+<div class="overlay hidden" id="analyzeOverlay">
+  <div class="modal">
+    <div class="mhead"><h2 id="modalTitle">Nuova analisi</h2><span class="spacer"></span><button class="btn" id="closeModal">Chiudi</button></div>
+    <div class="mbody">
+      <!-- config view -->
+      <div id="configView">
+        <div class="drop" id="drop">
+          <div><b>Trascina qui</b> una registrazione audio/video, oppure <b>clicca per scegliere</b>.</div>
+          <div class="hint" style="margin-top:6px">.wav .mp3 .m4a .aac .flac · .mp4 .mov .mkv .avi — puoi caricarne più di uno (stessa sessione, in ordine)</div>
+          <input type="file" id="fileInput" multiple accept=".wav,.mp3,.m4a,.aac,.flac,.mp4,.mov,.mkv,.avi,audio/*,video/*" style="display:none" />
+        </div>
+        <div class="filelist" id="fileList"></div>
+        <div class="opt check" style="margin-top:16px; padding:10px 12px; background:var(--panel-2); border:1px solid var(--line); border-radius:8px">
+          <input type="checkbox" id="optEvalMode" checked />
+          <label for="optEvalMode"><b>Modalità valutazione</b> — usa <code>run_evaluation_batch.py</code> (run valutabile: <code>review_packet.md</code> + <code>ai_review.json</code> + <code>metrics.json</code> sotto <code>evaluations/</code>)</label>
+        </div>
+        <div class="opts">
+          <div class="opt"><label>Session ID / label (opzionale)</label><input type="text" id="optSession" placeholder="es. lezione_2026_03_algebra" /></div>
+          <div class="opt"><label>Lingua</label>
+            <select id="optLang">
+              <option value="auto" selected>Auto (rileva it/en)</option>
+            </select>
+            <span class="hint">La pipeline rileva la lingua automaticamente (supporta it/en misto).</span>
+          </div>
+          <div class="opt"><label>Segmentazione</label>
+            <select id="optSeg">
+              <option value="structural" selected>structural</option>
+              <option value="adaptive">adaptive</option>
+              <option value="both">both</option>
+            </select>
+          </div>
+          <div class="opt"><label>Qualità / velocità</label>
+            <select id="optProfile">
+              <option value="light">Veloce (light)</option>
+              <option value="quality_local" selected>Bilanciato (quality_local)</option>
+              <option value="quality">Qualità (quality)</option>
+              <option value="full">Massima (full)</option>
+              <option value="current">Default pipeline (current)</option>
+            </select>
+          </div>
+          <div class="opt check"><input type="checkbox" id="optAlign" checked /><label for="optAlign">Alignment attivo</label></div>
+          <div class="opt check"><input type="checkbox" id="optDiar" /><label for="optDiar">Diarizzazione speaker</label></div>
+          <div class="opt check"><input type="checkbox" id="optScratch" /><label for="optScratch">From scratch (ignora cache)</label></div>
+          <div class="opt check"><input type="checkbox" id="optReview" checked /><label for="optReview">Review packet (Markdown)</label></div>
+          <div class="opt check"><input type="checkbox" id="optEval" /><label for="optEval">Valutazione qualità (metrics)</label></div>
+        </div>
+        <div class="hint" id="evalModeHint" style="margin-top:8px"></div>
+      </div>
+      <!-- progress view -->
+      <div id="progressView" class="hidden">
+        <div style="font-size:13px;color:var(--muted);margin-bottom:6px">Esecuzione pipeline <span id="elapsed" style="float:right"></span></div>
+        <div class="steps" id="steps"></div>
+        <div class="logbox hidden" id="logbox"></div>
+        <div class="errbox hidden" id="errbox"></div>
+      </div>
+    </div>
+    <div class="mfoot">
+      <button class="btn" id="toggleLog" title="Mostra/nascondi log">Log</button>
+      <span class="spacer"></span>
+      <span id="progHint" class="hint" style="color:var(--faint)"></span>
+      <button class="btn primary" id="analyzeBtn" disabled>Analizza</button>
+    </div>
+  </div>
+</div>
+
+<div class="tooltip hidden" id="tooltip"></div>
+
+<script>
+"use strict";
+const $ = s => document.querySelector(s);
+const el = (tag, cls, txt) => { const e=document.createElement(tag); if(cls)e.className=cls; if(txt!=null)e.textContent=txt; return e; };
+function fmt(t){ if(t==null||isNaN(t))return "0:00"; t=Math.max(0,t); const h=Math.floor(t/3600),m=Math.floor((t%3600)/60),s=Math.floor(t%60);
+  return h>0 ? `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}` : `${m}:${String(s).padStart(2,'0')}`; }
+
+const state = {
+  sessions: [], data:null, sessionPath:null, audioUrl:null, duration:0,
+  sentences:[], sentById:new Map(), sentStarts:[], sentEls:[],
+  qa:[], segments:[], activeSentIdx:-1, activeQA:null, userScrolling:false,
+};
+
+// ---- session picker ----
+async function loadSessions(){
+  if(location.protocol==='file:'){
+    $('#sessionSelect').innerHTML='<option value="">Apri tramite il server, non il file</option>';
+    showServerHint("Hai aperto il file HTML direttamente (file://). Avvia il server: "+
+      "apri il Terminale ed esegui  python3 lecture_ui/serve.py  poi vai su http://localhost:8000");
+    return;
+  }
+  try{
+    const r = await fetch('/api/sessions');
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    const j = await r.json();
+    state.sessions = j.sessions||[];
+    renderSessionOptions();
+    if(!state.sessions.length){
+      showServerHint("Server attivo, ma nessun session.json trovato sotto evaluations/, artifacts/ o tmp/. "+
+        "Genera prima un output con la pipeline, oppure verifica di aver avviato serve.py dalla cartella del progetto.");
+    }
+  }catch(e){
+    $('#sessionSelect').innerHTML='<option value="">Server non raggiungibile</option>';
+    showServerHint("Impossibile contattare il server locale ("+e.message+"). "+
+      "Assicurati di averlo avviato:  python3 lecture_ui/serve.py  e di usare l'indirizzo http://localhost:8000 (non il file HTML).");
+  }
+}
+function showServerHint(msg){
+  const box=$('#transcriptEmpty');
+  if(box) box.innerHTML='<h2>&#9888; '+msg.split(':')[0]+'</h2><p style="max-width:640px;margin:0 auto">'+msg+'</p>';
+}
+function renderSessionOptions(){
+  const q = $('#filter').value.trim().toLowerCase();
+  const sel = $('#sessionSelect');
+  const list = state.sessions.filter(s=>{
+    if(!q) return true;
+    const hay = `${s.session_id||''} ${s.source_name||''} ${s.rel_path||''} ${s.pipeline_profile||''} ${s.segmentation_mode||''} ${s.run_time_display||''}`.toLowerCase();
+    return hay.includes(q);
+  }).sort((a,b)=>(b.run_time||0)-(a.run_time||0));
+  sel.innerHTML='';
+  if(!list.length){ sel.innerHTML='<option value="">Nessun risultato</option>'; return; }
+  for(const s of list){
+    const o=document.createElement('option'); o.value=s.path;
+    const dur = s.duration_seconds? ' · '+fmt(s.duration_seconds):'';
+    const prof = [s.pipeline_profile,s.segmentation_mode].filter(Boolean).join('/');
+    const when = s.run_time_display ? s.run_time_display+'  —  ' : '';
+    o.textContent = `${when}${s.source_name||s.session_id||'?'}${dur} · Q/A ${s.qa_count}${prof?' · '+prof:''}`;
+    o.title = (s.run_time_display?('Run: '+s.run_time_display+'\n'):'')+s.rel_path;
+    sel.appendChild(o);
+  }
+}
+$('#filter').addEventListener('input', renderSessionOptions);
+$('#loadBtn').addEventListener('click', ()=>{ const p=$('#sessionSelect').value; if(p) loadSession(p); });
+$('#sessionSelect').addEventListener('dblclick', ()=>{ const p=$('#sessionSelect').value; if(p) loadSession(p); });
+
+// ---- load a session ----
+async function loadSession(path){
+  $('#loadBtn').disabled=true; $('#loadBtn').textContent='...';
+  try{
+    const r = await fetch('/api/session?path='+encodeURIComponent(path));
+    const j = await r.json();
+    if(j.error){ alert('Errore: '+j.error); return; }
+    state.data=j.session; state.sessionPath=j.session_path; state.audioUrl=j.audio_url;
+    normalize();
+    renderAll();
+    setupAudio(j.audio_url, j.audio_available);
+    $('#exportBtn').disabled=false;
+  }catch(e){ alert('Errore nel caricamento: '+e.message); }
+  finally{ $('#loadBtn').disabled=false; $('#loadBtn').textContent='Apri'; }
+}
+
+function normalize(){
+  const d=state.data;
+  // sentences
+  let sents=(d.sentences||[]).map(s=>({
+    id:s.sentence_id, text:s.text||'', start:num(s.start_seconds), end:num(s.end_seconds),
+    speaker:s.speaker_id||null, lang:s.detected_language||null,
+    review:s.review_priority||null, flags:s.sentence_review_flags||[],
+  })).filter(s=>s.text);
+  sents.sort((a,b)=>(a.start??0)-(b.start??0));
+  state.sentences=sents;
+  state.sentById=new Map(sents.map(s=>[s.id,s]));
+  state.sentStarts=sents.map(s=>s.start??0);
+  // segments
+  state.segments=(d.segments||[]).map(g=>({id:g.segment_id,start:num(g.start_seconds),end:num(g.end_seconds)}))
+                 .filter(g=>g.start!=null).sort((a,b)=>a.start-b.start);
+  // qa
+  const qt=x=>x&&x.start_seconds!=null?num(x.start_seconds):null;
+  state.qa=(d.qa_candidates||[]).map(q=>{
+    const qStart = qt(q.question_timing) ?? num(q.start_seconds);
+    const aStart = qt(q.answer_timing);
+    return {
+      id:q.qa_candidate_id, question:q.question_text||'', answer:q.answer_text||'',
+      qStart, aStart, start:num(q.start_seconds), end:num(q.end_seconds),
+      conf:q.confidence!=null?q.confidence:(q.confidence_score!=null?q.confidence_score:null),
+      confLabel:(q.confidence_label||'unknown').toLowerCase(),
+      qtype:q.question_type||null, answerIsQuestion:q.answer_is_question,
+      qSentIds:q.question_sentence_ids||[], aSentIds:q.answer_sentence_ids||[], cSentIds:q.context_sentence_ids||[],
+      qSpeaker:q.question_speaker_role, aSpeaker:q.answer_speaker_role,
+      ctxText:q.context_text||'', ctxStrategy:q.context_strategy||null, ctxConf:q.context_confidence||null,
+      flags:q.review_flags||[], reasons:q.reason_codes||[], notes:q.extraction_notes||'',
+      didactic:q.didactic_question_score,
+    };
+  });
+  state.qa.sort((a,b)=>(a.qStart??a.start??0)-(b.qStart??b.start??0));
+  // duration
+  const as=(d.audio_sources||[])[0];
+  state.duration = as && as.duration_seconds ? num(as.duration_seconds) : (state.sentStarts.length?state.sentences[state.sentences.length-1].end||0:0);
+}
+function num(v){ return v==null?null:(typeof v==='number'?v:parseFloat(v)); }
+
+// ---- render transcript ----
+function renderAll(){
+  const meta=(state.data.session_metadata||{});
+  $('#sessBadge').textContent = meta.session_id||'';
+  // transcript
+  const box=$('#transcript'); box.innerHTML='';
+  state.sentEls=[];
+  let lastSpk=null;
+  for(let i=0;i<state.sentences.length;i++){
+    const s=state.sentences[i];
+    const div=el('div','sentence'); div.dataset.idx=i;
+    if(s.speaker && s.speaker!==lastSpk){ const sp=el('span','spk',shortSpk(s.speaker)); div.appendChild(sp); lastSpk=s.speaker; }
+    else if(s.speaker){ const sp=el('span','spk',''); sp.style.marginRight='0'; }
+    const ts=el('span','ts',fmt(s.start)); div.appendChild(ts);
+    div.appendChild(document.createTextNode(s.text));
+    if(s.review && s.review!=='low'){ const fd=el('span','flagdot '+s.review); fd.title='review: '+s.review+(s.flags.length?' · '+s.flags.join(', '):''); div.appendChild(fd); }
+    div.addEventListener('click',()=>seek(s.start));
+    box.appendChild(div); state.sentEls.push(div);
+  }
+  $('#sentCount').textContent = state.sentences.length+' frasi';
+  // qa list
+  renderQAList();
+  $('#qaCount').textContent = state.qa.length;
+  // timeline
+  renderTimeline();
+  // detail hidden, list shown
+  showQAList();
+}
+function shortSpk(s){ return (s||'').replace('SPEAKER_','S'); }
+
+function renderQAList(){
+  const box=$('#qaList'); box.innerHTML='';
+  if(!state.qa.length){ box.innerHTML='<div class="empty" style="margin-top:30px"><p>Nessuna Q/A in questa sessione.</p></div>'; return; }
+  state.qaEls=new Map();
+  for(const q of state.qa){
+    const c=el('div','qa-card'); c.dataset.id=q.id;
+    const qd=el('div','q',q.question||'(domanda senza testo)');
+    const ad=el('div','a',q.answer?('→ '+q.answer):'(nessuna risposta)');
+    const meta=el('div','meta');
+    const conf=el('span','conf '+q.confLabel, confText(q));
+    meta.appendChild(conf);
+    if(q.qtype){ meta.appendChild(el('span','qtype',q.qtype)); }
+    const ts=el('span','tstamp',fmt(q.qStart??q.start)); meta.appendChild(ts);
+    c.appendChild(qd); c.appendChild(ad); c.appendChild(meta);
+    c.addEventListener('click',()=>openQA(q.id,true));
+    box.appendChild(c); state.qaEls.set(q.id,c);
+  }
+}
+function confText(q){ const p=q.conf!=null?Math.round(q.conf*100)+'%':'—'; return `${q.confLabel!=='unknown'?q.confLabel:''} ${p}`.trim(); }
+
+// ---- QA detail ----
+function openQA(id, seekTo){
+  const q=state.qa.find(x=>x.id===id); if(!q)return;
+  state.activeQA=q;
+  // highlight card
+  if(state.qaEls){ for(const [k,c] of state.qaEls){ c.classList.toggle('active',k===id); } }
+  markActiveTimeline();
+  // highlight sentences
+  applyQAHighlight(q);
+  if(seekTo && q.qStart!=null) seek(q.qStart);
+  renderQADetail(q);
+}
+function applyQAHighlight(q){
+  document.querySelectorAll('.sentence.q-hi,.sentence.a-hi,.sentence.c-hi').forEach(e=>e.classList.remove('q-hi','a-hi','c-hi'));
+  const idxOf=id=>{ const s=state.sentById.get(id); if(!s)return -1; return state.sentences.indexOf(s); };
+  q.qSentIds.forEach(id=>{ const i=idxOf(id); if(i>=0)state.sentEls[i].classList.add('q-hi'); });
+  q.aSentIds.forEach(id=>{ const i=idxOf(id); if(i>=0)state.sentEls[i].classList.add('a-hi'); });
+  q.cSentIds.forEach(id=>{ const i=idxOf(id); if(i>=0)state.sentEls[i].classList.add('c-hi'); });
+  // scroll first question sentence into view
+  const first=q.qSentIds.map(idxOf).filter(i=>i>=0).sort((a,b)=>a-b)[0];
+  if(first!=null){ state.sentEls[first].scrollIntoView({behavior:'smooth',block:'center'}); }
+}
+function renderQADetail(q){
+  const box=$('#qaDetail'); box.innerHTML='';
+  $('#qaHeadLabel').textContent='Dettaglio Q/A/C';
+  const back=el('button','btn back','← Torna alla lista'); back.addEventListener('click',showQAList); box.appendChild(back);
+  const legend=el('div'); legend.style.cssText='display:flex;gap:12px;margin:-6px 0 12px;font-size:11px;color:var(--muted)';
+  legend.innerHTML='<span><b style="color:var(--warn)">▍</b> domanda</span>'+
+                   '<span><b style="color:var(--accent-2)">▍</b> risposta</span>'+
+                   '<span><b style="color:var(--ctx)">▍</b> contesto</span>';
+  box.appendChild(legend);
+
+  box.appendChild(field('Domanda', mk('div','qtext',q.question||'—')));
+  const jr=el('div','jump-row');
+  const jq=el('button','btn','▶ Vai alla domanda'); jq.disabled=q.qStart==null; jq.addEventListener('click',()=>seek(q.qStart)); jr.appendChild(jq);
+  const ja=el('button','btn','▶ Vai alla risposta'); ja.disabled=q.aStart==null; ja.addEventListener('click',()=>seek(q.aStart)); jr.appendChild(ja);
+  box.appendChild(jr);
+
+  box.appendChild(field('Risposta', mk('div','atext',q.answer||'—')));
+
+  // ---- Context (always shown, highlighted) ----
+  const ctxSents=q.cSentIds.map(id=>state.sentById.get(id)).filter(Boolean);
+  const ctxText=(q.ctxText||'').trim() || ctxSents.map(s=>s.text).join(' ');
+  const ctxWrap=el('div');
+  if(ctxText){
+    const ct=el('div','ctext',ctxText); ctxWrap.appendChild(ct);
+    const cm=el('div','kv'); cm.style.marginTop='8px';
+    if(q.ctxStrategy) cm.appendChild(chip('strategia: '+q.ctxStrategy));
+    if(q.ctxConf) cm.appendChild(chip('confidenza: '+q.ctxConf));
+    const ctxStart=ctxSents.length?ctxSents.map(s=>s.start).filter(v=>v!=null).sort((a,b)=>a-b)[0]:null;
+    if(ctxStart!=null){ const jc=el('button','btn','▶ Vai al contesto'); jc.style.padding='4px 10px'; jc.style.fontSize='12px'; jc.addEventListener('click',()=>seek(ctxStart)); cm.appendChild(jc); }
+    if(cm.children.length) ctxWrap.appendChild(cm);
+  } else {
+    ctxWrap.appendChild(mk('div','ctext','Nessun contesto disponibile per questa Q/A.'));
+  }
+  box.appendChild(field('Contesto', ctxWrap));
+
+  // confidence
+  const cb=el('div');
+  cb.appendChild(mk('div','', (q.conf!=null?Math.round(q.conf*100)+'% ':'')+'('+ (q.confLabel||'—') +')'));
+  const bar=el('div','confbar'); const i=el('i'); const pct=Math.round((q.conf!=null?q.conf:0)*100);
+  i.style.width=pct+'%'; i.style.background=confColor(q.confLabel); bar.appendChild(i); cb.appendChild(bar);
+  box.appendChild(field('Confidenza', cb));
+
+  // attributes
+  const kv=el('div','kv');
+  if(q.qtype) kv.appendChild(chip('tipo: '+q.qtype));
+  if(q.didactic!=null) kv.appendChild(chip('didattica: '+q.didactic));
+  if(q.answerIsQuestion!=null) kv.appendChild(chip('risposta è domanda: '+(q.answerIsQuestion?'sì':'no')));
+  if(q.qStart!=null) kv.appendChild(chip('Q @ '+fmt(q.qStart)));
+  if(q.aStart!=null) kv.appendChild(chip('A @ '+fmt(q.aStart)));
+  if(q.qSpeaker && q.qSpeaker!=='unknown') kv.appendChild(chip('speaker Q: '+q.qSpeaker));
+  if(q.aSpeaker && q.aSpeaker!=='unknown') kv.appendChild(chip('speaker A: '+q.aSpeaker));
+  if(kv.children.length) box.appendChild(field('Attributi', kv));
+
+  if(q.flags.length){ const fk=el('div','kv'); q.flags.forEach(f=>fk.appendChild(chip(f,'flag'))); box.appendChild(field('Review flags', fk)); }
+
+  if(q.reasons.length){
+    const det=el('details','codes'); const sum=el('summary','','Reason codes ('+q.reasons.length+')'); det.appendChild(sum);
+    const rk=el('div','kv'); q.reasons.forEach(r=>rk.appendChild(chip(r))); det.appendChild(rk);
+    const wrap=field('Motivazioni', det); box.appendChild(wrap);
+  }
+  if(q.notes) box.appendChild(field('Note', mk('div','ctext',q.notes)));
+}
+function field(label,node){ const b=el('div','block'); b.appendChild(el('div','label',label)); b.appendChild(node); return b; }
+function mk(tag,cls,txt){ return el(tag,cls,txt); }
+function chip(txt,extra){ return el('span','chip'+(extra?' '+extra:''),txt); }
+function confColor(l){ return l==='high'?'var(--accent-2)':l==='medium'?'var(--warn)':l==='low'?'var(--bad)':'var(--faint)'; }
+function showQAList(){ $('#qaDetail').classList.add('hidden'); $('#qaList').classList.remove('hidden'); $('#qaHeadLabel').textContent='Q&A'; }
+function showQADetailPanel(){ $('#qaList').classList.add('hidden'); $('#qaDetail').classList.remove('hidden'); }
+
+// wrap renderQADetail to also switch panel
+const _rqd=renderQADetail; renderQADetail=function(q){ _rqd(q); showQADetailPanel(); };
+
+// ---- timeline ----
+function renderTimeline(){
+  const tl=$('#timeline');
+  // clear except played
+  [...tl.querySelectorAll('.seg-band,.qa-marker')].forEach(e=>e.remove());
+  const D=state.duration||1;
+  for(const g of state.segments){
+    const b=el('div','seg-band'); const l=(g.start/D)*100; const w=((Math.min(g.end,D)-g.start)/D)*100;
+    b.style.left=l+'%'; b.style.width=Math.max(0.2,w)+'%'; tl.appendChild(b);
+  }
+  state.markerEls=new Map();
+  for(const q of state.qa){
+    const t=q.qStart??q.start; if(t==null)continue;
+    const m=el('div','qa-marker '+q.confLabel); m.style.left=((t/D)*100)+'%';
+    m.appendChild(el('i'));
+    m.addEventListener('click',ev=>{ ev.stopPropagation(); openQA(q.id,true); });
+    m.addEventListener('mousemove',ev=>showTip(ev, q.question||'(Q/A)'));
+    m.addEventListener('mouseleave',hideTip);
+    tl.appendChild(m); state.markerEls.set(q.id,m);
+  }
+  tl.onclick=(ev)=>{ const r=tl.getBoundingClientRect(); const frac=(ev.clientX-r.left)/r.width; seek(frac*state.duration); };
+}
+function markActiveTimeline(){ if(!state.markerEls)return; for(const [k,m] of state.markerEls){ m.classList.toggle('active', state.activeQA && k===state.activeQA.id); } }
+
+// ---- audio + sync ----
+const audio=$('#audio');
+function setupAudio(url, available){
+  $('#nowplaying').textContent='';
+  if(!available || !url){
+    audio.removeAttribute('src'); audio.load();
+    $('#nowplaying').textContent='⚠ Audio normalizzato non trovato per questa sessione (replay testuale disponibile, timeline cliccabile).';
+    $('#dur').textContent=fmt(state.duration); return;
+  }
+  audio.src=url; audio.load();
+  const na=(state.data.audio_sources||[])[0]; 
+  const src=na&&na.normalized_asset?na.normalized_asset.source_filename:'';
+  $('#nowplaying').textContent = src?('Audio: '+src):'';
+  $('#dur').textContent=fmt(state.duration);
+}
+audio.addEventListener('loadedmetadata',()=>{ if(audio.duration&&isFinite(audio.duration)){ state.duration=audio.duration; $('#dur').textContent=fmt(state.duration); renderTimeline(); } });
+audio.addEventListener('timeupdate',onTime);
+$('#rate').addEventListener('change',e=>{ audio.playbackRate=parseFloat(e.target.value); });
+function seek(t){ if(t==null)return; if(audio.src){ audio.currentTime=Math.max(0,t); if(audio.paused)audio.play().catch(()=>{}); } else { onScrub(t); } }
+function onScrub(t){ // no audio: just move visuals
+  state.duration=state.duration||1; updatePlayhead(t); highlightAt(t);
+}
+function onTime(){ const t=audio.currentTime; $('#cur').textContent=fmt(t); updatePlayhead(t); highlightAt(t); }
+function updatePlayhead(t){
+  const D=state.duration||1; const frac=Math.min(1,Math.max(0,t/D));
+  $('#playhead').style.left=(frac*100)+'%'; $('#played').style.width=(frac*100)+'%';
+  $('#cur').textContent=fmt(t);
+}
+function highlightAt(t){
+  const idx=findSentence(t);
+  if(idx!==state.activeSentIdx){
+    if(state.activeSentIdx>=0 && state.sentEls[state.activeSentIdx]) state.sentEls[state.activeSentIdx].classList.remove('active');
+    state.activeSentIdx=idx;
+    if(idx>=0 && state.sentEls[idx]){
+      const e=state.sentEls[idx]; e.classList.add('active');
+      if($('#autoscroll').checked && !state.userScrolling) e.scrollIntoView({behavior:'smooth',block:'center'});
+    }
+  }
+  // active QA marker based on time window
+  const cur=state.qa.find(q=>{ const a=q.qStart??q.start, b=q.end??((q.aStart??a)+4); return a!=null&&t>=a-0.2&&t<=(b??a+4); });
+  if(cur){ if(!state.activeQA||state.activeQA.id!==cur.id){ state.activeQA=cur; markActiveTimeline(); if(state.qaEls){for(const[k,c]of state.qaEls)c.classList.toggle('active',k===cur.id);} } }
+}
+function findSentence(t){
+  const a=state.sentStarts; if(!a.length)return -1;
+  let lo=0,hi=a.length-1,res=-1;
+  while(lo<=hi){ const mid=(lo+hi)>>1; if(a[mid]<=t){res=mid;lo=mid+1;} else hi=mid-1; }
+  if(res<0)return -1;
+  const s=state.sentences[res];
+  if(s.end!=null && t>s.end+0.6){ /* still show last */ }
+  return res;
+}
+// user-scroll detection to avoid fighting auto-scroll
+let scrollT=null;
+$('#transcript').addEventListener('scroll',()=>{ state.userScrolling=true; clearTimeout(scrollT); scrollT=setTimeout(()=>state.userScrolling=false,1200); });
+
+// ---- tooltip ----
+const tip=$('#tooltip');
+function showTip(ev,text){ tip.textContent=text; tip.classList.remove('hidden'); tip.style.left=(ev.clientX+12)+'px'; tip.style.top=(ev.clientY-10)+'px'; }
+function hideTip(){ tip.classList.add('hidden'); }
+
+// ---- export ----
+$('#exportBtn').addEventListener('click',()=>{
+  if(!state.data)return;
+  const blob=new Blob([JSON.stringify(state.data,null,2)],{type:'application/json'});
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob);
+  const name=(state.data.session_metadata&&state.data.session_metadata.session_id)||'session';
+  a.download=name+'.json'; a.click(); URL.revokeObjectURL(a.href);
+});
+
+// keyboard: space=play/pause, arrows seek
+document.addEventListener('keydown',e=>{
+  if(['INPUT','SELECT','TEXTAREA'].includes(e.target.tagName))return;
+  if(e.code==='Space'){ e.preventDefault(); if(audio.src){ audio.paused?audio.play():audio.pause(); } }
+  else if(e.code==='ArrowRight'){ if(audio.src)audio.currentTime+=5; }
+  else if(e.code==='ArrowLeft'){ if(audio.src)audio.currentTime-=5; }
+});
+
+// =========================================================================
+// Milestone 2: analyze a new recording (wrapper around the pipeline CLI)
+// =========================================================================
+const AZ = { files:[], job:null, timer:null, stageLabels:{} };
+
+$('#newBtn').addEventListener('click', openAnalyze);
+$('#closeModal').addEventListener('click', closeAnalyze);
+$('#analyzeBtn').addEventListener('click', submitAnalyze);
+$('#toggleLog').addEventListener('click', ()=>{ $('#logbox').classList.toggle('hidden'); });
+
+function syncEvalMode(){
+  const ev=$('#optEvalMode').checked;
+  // options ignored by the batch script (governed by the profile) in eval mode
+  ['optAlign','optDiar','optReview','optEval'].forEach(id=>{
+    const cb=$('#'+id); if(!cb)return; cb.disabled=ev;
+    const row=cb.closest('.opt'); if(row) row.style.opacity=ev?0.45:1;
+  });
+  const h=$('#evalModeHint');
+  if(h) h.textContent = ev
+    ? 'Run valutabile: alignment/diarizzazione dipendono dal preset; review + metrics sempre generati. Un file per run.'
+    : 'Modalità diretta: output in output/<label>/. Review/metrics solo se selezionati o con preset Massima.';
+}
+function openAnalyze(){
+  AZ.files=[]; renderFileList();
+  $('#configView').classList.remove('hidden');
+  $('#progressView').classList.add('hidden');
+  $('#logbox').classList.add('hidden'); $('#logbox').textContent='';
+  $('#errbox').classList.add('hidden'); $('#errbox').textContent='';
+  $('#modalTitle').textContent='Nuova analisi';
+  $('#progHint').textContent='';
+  $('#analyzeBtn').disabled=true; $('#analyzeBtn').textContent='Analizza';
+  $('#closeModal').textContent='Chiudi';
+  $('#analyzeOverlay').classList.remove('hidden');
+  syncEvalMode();
+}
+document.addEventListener('change', e=>{ if(e.target && e.target.id==='optEvalMode') syncEvalMode(); });
+function closeAnalyze(){
+  if(AZ.timer){ clearInterval(AZ.timer); AZ.timer=null; }
+  $('#analyzeOverlay').classList.add('hidden');
+}
+
+// file pickers + drag&drop
+const drop=$('#drop'), fileInput=$('#fileInput');
+drop.addEventListener('click',()=>fileInput.click());
+fileInput.addEventListener('change',e=>{ addFiles(e.target.files); fileInput.value=''; });
+['dragenter','dragover'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.add('hot');}));
+['dragleave','drop'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove('hot');}));
+drop.addEventListener('drop',e=>{ if(e.dataTransfer&&e.dataTransfer.files) addFiles(e.dataTransfer.files); });
+function addFiles(list){ for(const f of list){ AZ.files.push(f); } renderFileList(); }
+function renderFileList(){
+  const box=$('#fileList'); box.innerHTML='';
+  AZ.files.forEach((f,i)=>{
+    const it=el('div','fileitem');
+    it.appendChild(el('span','',f.name));
+    it.appendChild(el('span','hint',' '+humanSize(f.size)));
+    const rm=el('span','rm','✕'); rm.title='Rimuovi'; rm.addEventListener('click',()=>{AZ.files.splice(i,1);renderFileList();});
+    it.appendChild(rm); box.appendChild(it);
+  });
+  $('#analyzeBtn').disabled = AZ.files.length===0;
+}
+function humanSize(n){ if(n==null)return''; const u=['B','KB','MB','GB']; let i=0; while(n>=1024&&i<u.length-1){n/=1024;i++;} return n.toFixed(n<10&&i>0?1:0)+' '+u[i]; }
+
+async function submitAnalyze(){
+  if(!AZ.files.length)return;
+  const fd=new FormData();
+  fd.append('session_id', $('#optSession').value.trim());
+  fd.append('pipeline_profile', $('#optProfile').value);
+  fd.append('segmentation_mode', $('#optSeg').value);
+  fd.append('disable_alignment', (!$('#optAlign').checked).toString());
+  fd.append('enable_diarization', $('#optDiar').checked.toString());
+  fd.append('from_scratch', $('#optScratch').checked.toString());
+  fd.append('evaluation_mode', $('#optEvalMode').checked.toString());
+  fd.append('export_review_packet', $('#optReview').checked.toString());
+  fd.append('export_evaluation', $('#optEval').checked.toString());
+  for(const f of AZ.files) fd.append('files', f, f.name);
+
+  $('#analyzeBtn').disabled=true; $('#analyzeBtn').textContent='Caricamento...';
+  try{
+    const r=await fetch('/api/analyze',{method:'POST',body:fd});
+    const j=await r.json();
+    if(j.error){ showAnalyzeError(j.error); $('#analyzeBtn').textContent='Analizza'; $('#analyzeBtn').disabled=false; return; }
+    AZ.job=j.job_id;
+    $('#configView').classList.add('hidden');
+    $('#progressView').classList.remove('hidden');
+    $('#modalTitle').textContent='Analisi in corso';
+    $('#analyzeBtn').classList.add('hidden');
+    $('#progHint').textContent='Puoi chiudere: l\'analisi prosegue sul server.';
+    buildSteps();
+    AZ.timer=setInterval(pollJob, 1200);
+    pollJob();
+  }catch(e){ showAnalyzeError('Invio fallito: '+e.message); $('#analyzeBtn').textContent='Analizza'; $('#analyzeBtn').disabled=false; }
+}
+function showAnalyzeError(msg){ const b=$('#errbox'); b.textContent='⚠ '+msg; b.classList.remove('hidden'); }
+
+function buildSteps(){
+  const order=['session_loading','audio_normalization','transcription','alignment','diarization','sentence_reconstruction','transcript_segmentation','qa_extraction','json_export'];
+  const box=$('#steps'); box.innerHTML=''; AZ.stepEls={};
+  for(const name of order){
+    const st=el('div','step pending'); st.dataset.name=name;
+    const ico=el('span','ico','•'); st.appendChild(ico);
+    st.appendChild(el('span','lbl',name));
+    st.appendChild(el('span','dur',''));
+    box.appendChild(st); AZ.stepEls[name]=st;
+  }
+}
+async function pollJob(){
+  if(!AZ.job)return;
+  try{
+    const r=await fetch('/api/analyze/status?job='+AZ.job); const j=await r.json();
+    if(j.error){ return; }
+    $('#elapsed').textContent = j.elapsed!=null ? (j.elapsed+'s') : '';
+    updateSteps(j.stages);
+    if(j.log_tail && j.log_tail.length){ const lb=$('#logbox'); lb.textContent=j.log_tail.join('\n'); lb.scrollTop=lb.scrollHeight; }
+    if(j.status!=='running'){
+      clearInterval(AZ.timer); AZ.timer=null;
+      if(j.status==='done' && j.output_path){ onAnalyzeDone(j.output_path); }
+      else { onAnalyzeFailed(j.error||'Analisi non riuscita.'); }
+    }
+  }catch(e){ /* transient */ }
+}
+function updateSteps(stages){
+  if(!AZ.stepEls)return;
+  let runningSet=false;
+  for(const st of stages){
+    const e=AZ.stepEls[st.name]; if(!e)continue;
+    e.querySelector('.lbl').textContent=st.label;
+    let cls='pending', ico='•';
+    const s=st.status;
+    if(s==='executed'||s==='reused_from_cache'||s==='reused_from_artifact'||s==='completed'||s==='partial'){ cls='done'; ico='✓'; }
+    else if(s==='skipped'||s==='disabled'){ cls='skipped'; ico='–'; }
+    else if(s==='failed'){ cls='failed'; ico='✕'; }
+    e.className='step '+cls;
+    e.querySelector('.ico').textContent=ico;
+    e.querySelector('.dur').textContent = st.duration!=null ? st.duration.toFixed(2)+'s' : (s==='reused_from_cache'?'cache':'');
+  }
+  // mark the first still-pending stage as running (visual)
+  for(const st of stages){ const e=AZ.stepEls[st.name];
+    if(st.status==='pending' && !runningSet){ e.className='step running'; e.querySelector('.ico').textContent='◐'; runningSet=true; }
+  }
+}
+async function onAnalyzeDone(outputPath){
+  $('#modalTitle').textContent='Analisi completata';
+  $('#progHint').textContent='Apertura del risultato...';
+  await loadSessions();               // refresh picker so the new run appears
+  await loadSession(outputPath);      // open the produced JSON in the viewer
+  // preselect it in the dropdown if present
+  const sel=$('#sessionSelect'); for(const o of sel.options){ if(o.value===outputPath){ sel.value=outputPath; break; } }
+  closeAnalyze();
+}
+function onAnalyzeFailed(msg){
+  $('#modalTitle').textContent='Analisi non riuscita';
+  showAnalyzeError(msg);
+  $('#logbox').classList.remove('hidden');
+  $('#progHint').textContent='';
+  $('#closeModal').textContent='Chiudi';
+}
+
+loadSessions();
+</script>
+</body>
+</html>

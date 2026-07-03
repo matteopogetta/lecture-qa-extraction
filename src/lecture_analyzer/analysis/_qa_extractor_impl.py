@@ -60,6 +60,7 @@ _QUESTION_STOPWORDS = {
     "di",
     "do",
     "does",
+    "dove",
     "e",
     "for",
     "from",
@@ -81,7 +82,15 @@ _QUESTION_STOPWORDS = {
     "of",
     "on",
     "or",
+    "perche",
+    "perché",
     "point",
+    "quale",
+    "quali",
+    "quanta",
+    "quante",
+    "quanti",
+    "quanto",
     "right",
     "se",
     "si",
@@ -131,10 +140,30 @@ _RHETORICAL_POLL_QUESTION_RE = re.compile(
 _TAG_QUESTION_RE = re.compile(
     r"^(?:right|vero|correct|ok|okay|yes|no|eh|no)\??$",
 )
+_TRAILING_ANSWER_TAG_RE = re.compile(
+    r"^(?P<body>.+?)[,;]?\s+(?P<tag>right|vero|correct|ok|okay|yes|no|eh)\?$",
+    flags=re.IGNORECASE,
+)
 _SUBORDINATE_QUESTION_START_WORDS = {
     "quando",
     "when",
 }
+_CAUSAL_ANSWER_AFTER_WHY_RE = re.compile(
+    r"^(?:because|perche|perché)\s+"
+    r"(?:i|we|you|he|she|they|io|noi|lui|lei|loro|"
+    r"ho|hai|ha|abbiamo|avete|hanno|sono|ero|era|"
+    r"da|nel|nella|nei|nelle|con|per)\b",
+)
+_CAUSAL_DECLARATIVE_STATEMENT_RE = re.compile(
+    r"^(?:because|perche|perché)\s+"
+    r"(?:(?:a|an|the|un|una|il|lo|la|i|gli|le)\s+)?"
+    r"[\w']+(?:\s+[\w']+){0,6}\s+"
+    r"(?:is|are|was|were|e|è)\s+(?:that|che)\b",
+)
+_CAUSAL_EXISTENTIAL_TAG_RE = re.compile(
+    r"^(?:because|perche|perché)\s+"
+    r"(?:there\s+(?:is|are)|c[' ]?e|ci\s+sono)\b",
+)
 _EXPLANATORY_CLAUSE_START_RE = re.compile(
     r"^(?:because|perche)\s+(?:if|se|when|quando)\b",
 )
@@ -156,6 +185,21 @@ _AUXILIARY_QUESTION_START_WORDS = {
     "were",
     "will",
     "would",
+    "c'e",
+    "c'era",
+    "esiste",
+    "esistono",
+    "puo",
+    "puoi",
+    "possiamo",
+}
+_LEADING_QUESTION_DISCOURSE_MARKERS = {
+    "allora",
+    "cioe",
+    "cioè",
+    "e",
+    "ma",
+    "ok",
 }
 _WEAK_DEFERRED_KEYWORDS = {
     "answer",
@@ -196,6 +240,9 @@ _META_ANSWER_OPENING_RE = re.compile(
     flags=re.IGNORECASE,
 )
 _INCOMPLETE_ANSWER_END_WORDS = {
+    "al",
+    "alla",
+    "allo",
     "because",
     "but",
     "che",
@@ -204,9 +251,18 @@ _INCOMPLETE_ANSWER_END_WORDS = {
     "of",
     "per",
     "perche",
+    "questa",
+    "queste",
+    "questi",
+    "questo",
     "se",
     "that",
+    "these",
+    "this",
+    "those",
     "to",
+    "toward",
+    "towards",
     "when",
     "which",
 }
@@ -215,8 +271,8 @@ _INCOMPLETE_ANSWER_START_RE = re.compile(
 )
 _BACKCHANNEL_CHECK_RE = re.compile(
     r"\b(?:"
-    r"ci\s+siamo|mi\s+state\s+(?:vedendo|sentendo)|"
-    r"are\s+(?:we|you)\s+(?:ready|good|clear)|"
+    r"ci\s+siamo|mi\s+state\s+(?:vedendo|sentendo|seguendo)|"
+    r"are\s+(?:we|you)\s+(?:ready|good|clear|following)|"
     r"can\s+you\s+(?:see|hear|follow)"
     r")\b",
 )
@@ -225,6 +281,13 @@ _PROCEDURAL_QUESTION_RE = re.compile(
     r"ask\s+(?:[a-z]+\s+){0,4}(?:a\s+)?question|"
     r"(?:one|1)\s+more\s+(?:audience\s+)?question"
     r")\b",
+)
+_FOLLOWUP_PROMPT_ANSWER_RE = re.compile(
+    r"^(?:"
+    r"(?:tell|explain|describe|show|walk)\s+(?:me|us)\b"
+    r"|(?:can|could|would)\s+you\s+(?:tell|explain|describe|show)\b"
+    r"|(?:racconta|raccontaci|raccontami|spiega|spiegaci|spiegami|dicci|dimmi)\b"
+    r")",
 )
 _POLL_OPTION_WORDS = {
     "0",
@@ -336,6 +399,19 @@ class _ContextExtraction:
     context_source_utterance_ids: list[str] = field(default_factory=list)
     context_strategy: str | None = None
     context_confidence: str | None = None
+    context_selection_score: float | None = None
+    context_reasons: list[str] = field(default_factory=list)
+    candidate_context_count: int = 0
+
+
+@dataclass(slots=True)
+class _ContextSelection:
+    """Candidate context units plus compact selection diagnostics."""
+
+    units: list[_ExtractionUnit] = field(default_factory=list)
+    score: float | None = None
+    reasons: list[str] = field(default_factory=list)
+    candidate_count: int = 0
 
 
 @dataclass(slots=True)
@@ -448,6 +524,25 @@ class _LocalRuleBasedAnswerSearcher:
                 )
                 if leading_answer is not None:
                     candidates.append(leading_answer)
+                    combined_answer = self._extractor._build_answer_candidate_with_competing_prefix(
+                        question=question,
+                        answer_units=collected_units,
+                        competing_unit=units[candidate_index],
+                        answer_prefix=leading_answer.answer_text,
+                        distance_units=distance_units,
+                        segment_lookup=segment_lookup,
+                    )
+                    if combined_answer is not None:
+                        candidates.append(combined_answer)
+                cluster_answer = self._extractor._build_interview_cluster_answer_candidate(
+                    question=question,
+                    units=units,
+                    question_by_index=question_by_index,
+                    cluster_start_index=candidate_index,
+                    segment_lookup=segment_lookup,
+                )
+                if cluster_answer is not None:
+                    candidates.append(cluster_answer)
                 competing_question_stop = True
                 search_stop_reason = "competing_question"
                 break
@@ -1219,6 +1314,7 @@ class QAPairExtractor:
             "moderator_handoff_answer_penalty",
             "low_information_answer_penalty",
             "answer_circular_echo_penalty",
+            "question_continuation_answer_penalty",
         }
         if reason_codes & weak_pair_reasons and candidate.confidence < 0.72:
             return False
@@ -1231,6 +1327,12 @@ class QAPairExtractor:
                 "same_sentence_without_answer_cue",
                 "answer_boilerplate_penalty",
             }
+        ):
+            return False
+        if (
+            question_debug.get("question_intent") == "embedded_statement_question"
+            and candidate.confidence < 0.78
+            and "interview_echo_question" not in reason_codes
         ):
             return False
 
@@ -1251,10 +1353,95 @@ class QAPairExtractor:
         final_quality_score = self._safe_float(
             quality_features.get("final_quality_score"),
         )
+        answer_quality_score = self._safe_float(
+            quality_features.get("answer_quality_score"),
+        )
         risk_score = self._safe_float(quality_features.get("risk_score"))
         risk_reasons = set(quality_features.get("risk_reasons") or [])
+        answer_responsiveness_score = self._safe_float(
+            quality_features.get("answer_responsiveness_score"),
+        )
         risk_band = str(quality_features.get("risk_band") or "")
         quality_band = str(quality_features.get("quality_band") or "")
+        answer_cue_score = float(partial_scores.get("answer_cues") or 0.0)
+        keyword_overlap_score = float(partial_scores.get("keyword_overlap") or 0.0)
+        answer_context_score = float(partial_scores.get("answer_context") or 0.0)
+        span_completeness_score = float(
+            partial_scores.get("span_completeness") or 0.0,
+        )
+        local_socratic_completion = (
+            "socratic_short_answer_support" in reason_codes
+            and "answer_keyword_overlap" in reason_codes
+            and bool(
+                reason_codes
+                & {
+                    "answer_in_same_sentence",
+                    "answer_in_next_sentence",
+                    "same_sentence_answer",
+                },
+            )
+            and "answer_is_question" not in reason_codes
+            and "answer_contains_question_mark" not in reason_codes
+            and "poll_or_backchannel_noise" not in risk_reasons
+        )
+        if (
+            local_socratic_completion
+            and candidate.confidence >= 0.44
+            and final_quality_score is not None
+            and final_quality_score >= 0.38
+            and (
+                answer_responsiveness_score is None
+                or answer_responsiveness_score >= 0.48
+            )
+        ):
+            return True
+        interview_cluster_completion = (
+            "interview_cluster_answer_support" in reason_codes
+            and "answer_is_question" not in reason_codes
+            and "answer_contains_question_mark" not in reason_codes
+            and "poll_or_backchannel_noise" not in risk_reasons
+            and "followup_prompt_answer" not in risk_reasons
+        )
+        if (
+            interview_cluster_completion
+            and candidate.confidence >= 0.52
+            and final_quality_score is not None
+            and final_quality_score >= 0.38
+            and answer_quality_score is not None
+            and answer_quality_score >= 0.45
+        ):
+            return True
+        interview_echo_completion = (
+            "interview_echo_question" in reason_codes
+            and "answer_is_question" not in reason_codes
+            and "answer_contains_question_mark" not in reason_codes
+            and "poll_or_backchannel_noise" not in risk_reasons
+            and "followup_prompt_answer" not in risk_reasons
+        )
+        if (
+            interview_echo_completion
+            and candidate.confidence >= 0.60
+            and final_quality_score is not None
+            and final_quality_score >= 0.48
+            and answer_quality_score is not None
+            and answer_quality_score >= 0.45
+        ):
+            return True
+        extended_before_competing = (
+            "answer_extended_before_competing_question" in reason_codes
+            and "answer_is_question" not in reason_codes
+            and "answer_contains_question_mark" not in reason_codes
+            and "poll_or_backchannel_noise" not in risk_reasons
+        )
+        if (
+            extended_before_competing
+            and candidate.confidence >= 0.60
+            and final_quality_score is not None
+            and final_quality_score >= 0.42
+            and answer_quality_score is not None
+            and answer_quality_score >= 0.55
+        ):
+            return True
         if final_quality_score is not None and risk_score is not None:
             if risk_band == "high" and final_quality_score < 0.58:
                 return False
@@ -1265,11 +1452,114 @@ class QAPairExtractor:
                 "surface_answer_cue_risk",
             }.issubset(risk_reasons) and candidate.confidence < 0.78:
                 return False
-            if "poll_or_backchannel_noise" in risk_reasons and risk_score >= 0.30:
+            if "poll_or_backchannel_noise" in risk_reasons:
                 return False
             if "surface_answer_cue_risk" in risk_reasons and final_quality_score < 0.62:
                 return False
+            if "thin_context_risk" in risk_reasons and final_quality_score < 0.60:
+                return False
+            if (
+                "implicit_question_cue" in reason_codes
+                and "thin_context_risk" in risk_reasons
+                and (
+                    "competing_question" in risk_reasons
+                    or "circular_answer_echo" in risk_reasons
+                )
+                and final_quality_score < 0.74
+            ):
+                return False
+            if (
+                "quality_local_deferred" in risk_reasons
+                and "competing_question" in risk_reasons
+                and final_quality_score < 0.72
+            ):
+                return False
+            if (
+                "unanchored_quantity_answer" in risk_reasons
+                and (
+                    "competing_question" in risk_reasons
+                    or final_quality_score < 0.76
+                )
+            ):
+                return False
+            if (
+                "followup_prompt_answer" in risk_reasons
+                and (
+                    "competing_question" in risk_reasons
+                    or "weak_question_form" in risk_reasons
+                    or "embedded_statement_question" in risk_reasons
+                    or final_quality_score < 0.76
+                )
+            ):
+                return False
+            if (
+                "weak_implicit_quantity_question" in risk_reasons
+                and final_quality_score < 0.78
+            ):
+                return False
+            if (
+                "weak_expanded_contextual_question" in risk_reasons
+                and "competing_question" in risk_reasons
+                and final_quality_score < 0.76
+            ):
+                return False
+            if (
+                "thin_answer_reply" in risk_reasons
+                and final_quality_score < 0.74
+                and (question_debug.get("question_score") or 0.0) < 0.58
+            ):
+                return False
+            if (
+                "low_sentence_autonomy" in risk_reasons
+                and answer_cue_score <= 0.0
+                and keyword_overlap_score <= 0.05
+                and span_completeness_score <= 0.0
+                and answer_context_score < 0.0
+                and final_quality_score < 0.84
+            ):
+                return False
+            if (
+                question_debug.get("intra_sentence_qa")
+                and (question_debug.get("question_score") or 0.0) <= 0.55
+                and answer_cue_score <= 0.0
+                and keyword_overlap_score <= 0.05
+                and answer_context_score < 0.0
+            ):
+                return False
+            if (
+                "low_sentence_autonomy" in risk_reasons
+                and (
+                    "embedded_statement_question" in risk_reasons
+                    or "weak_question_form" in risk_reasons
+                )
+                and final_quality_score < 0.60
+            ):
+                return False
             if "incomplete_answer_span" in risk_reasons and final_quality_score < 0.65:
+                return False
+            if (
+                answer_responsiveness_score is not None
+                and answer_responsiveness_score < 0.42
+                and "weak_answer_responsiveness" in risk_reasons
+                and final_quality_score < 0.72
+                and (
+                    "low_relevance" in risk_reasons
+                    or "thin_context_risk" in risk_reasons
+                    or "quality_local_deferred" in risk_reasons
+                    or "embedded_statement_question" in risk_reasons
+                    or "weak_question_form" in risk_reasons
+                )
+            ):
+                return False
+            if (
+                "monologue_continuation_risk" in risk_reasons
+                and (
+                    final_quality_score < 0.68
+                    or "weak_answer_responsiveness" in risk_reasons
+                    or "embedded_statement_question" in risk_reasons
+                    or "weak_question_form" in risk_reasons
+                )
+            ):
                 return False
 
         return True
@@ -1282,6 +1572,16 @@ class QAPairExtractor:
 
         if not ranked_answers:
             return None
+        local_socratic_answers = [
+            answer
+            for answer in ranked_answers
+            if not bool(answer.metadata.get("answer_is_question"))
+            and answer.answer_score >= 0.45
+            and "same_sentence_answer" in answer.reason_codes
+            and "socratic_short_answer_support" in answer.reason_codes
+        ]
+        if local_socratic_answers:
+            return max(local_socratic_answers, key=lambda answer: answer.answer_score)
         for answer in ranked_answers:
             if not bool(answer.metadata.get("answer_is_question")):
                 return answer
@@ -1491,6 +1791,15 @@ class QAPairExtractor:
             question_text = extracted.question_text
             local_answer_seed = extracted.local_answer_seed
             extraction_reason = extracted.extraction_reason
+            if (
+                "?" not in unit.text
+                and self._is_causal_answer_after_previous_question(
+                    unit_index=index,
+                    units=units,
+                    normalized_question=normalize_rule_text(question_text),
+                )
+            ):
+                continue
             question_evaluation = self._evaluate_question_text(question_text)
             if question_evaluation is None:
                 continue
@@ -1532,8 +1841,27 @@ class QAPairExtractor:
             reason_codes.append(extraction_reason)
             reason_codes.extend(question_support["reason_codes"])
             reason_codes.extend(context_expansion["reason_codes"])
+            preamble_text = extracted.question_preamble or ""
+            if (
+                "poll_or_backchannel_noise" not in reason_codes
+                and (
+                    self._has_poll_or_backchannel_noise(
+                        normalize_rule_text(question_text),
+                    )
+                    or self._has_poll_or_backchannel_noise(
+                        normalize_rule_text(preamble_text),
+                    )
+                )
+            ):
+                reason_codes.append("poll_or_backchannel_noise")
             if extracted.intra_sentence_qa:
                 reason_codes.append("intra_sentence_qa")
+            if self._is_interview_echo_question_candidate(
+                unit_index=index,
+                units=units,
+                question_text=question_text,
+            ):
+                reason_codes.append("interview_echo_question")
             if self._is_low_autonomy_implicit_question(reason_codes):
                 reason_codes.append("low_autonomy_implicit_question")
 
@@ -1602,6 +1930,8 @@ class QAPairExtractor:
         if not cleaned_text:
             return None
 
+        best_extraction: _QuestionExtraction | None = None
+        best_score = -1.0
         for sentence, _, sentence_end in self._sentence_spans(cleaned_text):
             if "?" not in sentence:
                 continue
@@ -1614,20 +1944,32 @@ class QAPairExtractor:
                 followup_question = trailing_spans[0][0].strip()
                 trailing_text = trailing_text[trailing_spans[0][2] :].strip() or None
                 question_text = self._join_text([question_text, followup_question])
-                return _QuestionExtraction(
+                extraction = _QuestionExtraction(
                     question_text=question_text,
                     local_answer_seed=trailing_text,
                     extraction_reason="contextual_followup_question_merged",
                     question_preamble=question_preamble,
                     intra_sentence_qa=bool(trailing_text),
                 )
-            return _QuestionExtraction(
-                question_text=question_text,
-                local_answer_seed=trailing_text,
-                extraction_reason="question_sentence_extracted",
-                question_preamble=question_preamble,
-                intra_sentence_qa=bool(trailing_text),
+            else:
+                extraction = _QuestionExtraction(
+                    question_text=question_text,
+                    local_answer_seed=trailing_text,
+                    extraction_reason="question_sentence_extracted",
+                    question_preamble=question_preamble,
+                    intra_sentence_qa=bool(trailing_text),
+                )
+            evaluation = self._evaluate_question_text(extraction.question_text)
+            score = (
+                float(evaluation["question_score"])
+                if evaluation is not None
+                else -1.0
             )
+            if score > best_score:
+                best_extraction = extraction
+                best_score = score
+        if best_extraction is not None:
+            return best_extraction
 
         if ":" in cleaned_text:
             prefix, suffix = cleaned_text.split(":", maxsplit=1)
@@ -1659,6 +2001,9 @@ class QAPairExtractor:
         cleaned_question = question_text.strip()
         if not cleaned_question:
             return cleaned_question, None
+        normalized_cleaned = normalize_rule_text(cleaned_question)
+        if collect_rule_matches(normalized_cleaned, DIDACTIC_QUESTION_RULES):
+            return cleaned_question, None
 
         split_match = re.search(
             r"(?P<preamble>.+?)(?:,\s*|\s+)(?:but|and|so)\s+"
@@ -1670,6 +2015,27 @@ class QAPairExtractor:
             preamble = split_match.group("preamble").strip(" ,")
             focus = split_match.group("focus").strip()
             if count_tokens(normalize_rule_text(focus)) >= 4:
+                focus = focus[0].upper() + focus[1:] if focus else focus
+                return focus, preamble or None
+
+        focus_match = re.search(
+            r"(?P<preamble>.+?)(?P<focus>\b(?:"
+            r"how|what|where|why|when|which|who|"
+            r"come|cosa|dove|perche|perché|quale|quali|quanto|quanta|quanti|quante"
+            r")\b[^?]*\?)$",
+            cleaned_question,
+            flags=re.IGNORECASE,
+        )
+        if focus_match:
+            preamble = focus_match.group("preamble").strip(" ,")
+            focus = focus_match.group("focus").strip()
+            if (
+                preamble
+                and count_tokens(normalize_rule_text(focus)) >= 2
+                and not self._starts_with_interrogative_word(cleaned_question)
+                and not re.search(r"\b(?:ask|asks|asked)\b", normalize_rule_text(preamble))
+                and not normalize_rule_text(focus).startswith("what about ")
+            ):
                 focus = focus[0].upper() + focus[1:] if focus else focus
                 return focus, preamble or None
 
@@ -1694,6 +2060,11 @@ class QAPairExtractor:
         if (
             not has_question_mark
             and any(pattern.search(normalized_text) for pattern in DECLARATIVE_WHAT_PATTERNS)
+        ):
+            return None
+        if (
+            not has_question_mark
+            and self._is_causal_declarative_statement(normalized_text)
         ):
             return None
         if not has_question_mark and not question_matches and not didactic_matches:
@@ -2084,10 +2455,10 @@ class QAPairExtractor:
             return None
 
         answer_text = question.local_answer_seed.strip()
-        if not self._is_plausible_answer_text(answer_text):
+        if not self._is_plausible_answer_for_question(question, answer_text):
             return None
-        answer_text, trim_reason = self._trim_answer_meta_opening(answer_text)
-        if not self._is_plausible_answer_text(answer_text):
+        answer_text, trim_reasons = self._trim_answer_text(answer_text)
+        if not self._is_plausible_answer_for_question(question, answer_text):
             return None
 
         answer_segment_ids = self._resolve_segment_ids_for_unit(
@@ -2113,7 +2484,7 @@ class QAPairExtractor:
             },
             reason_codes=self._unique_strings(
                 [self._same_unit_reason(question.unit.layer)]
-                + ([trim_reason] if trim_reason else []),
+                + trim_reasons,
             ),
             metadata={
                 "answer_source": "same_text_unit_seed",
@@ -2135,10 +2506,10 @@ class QAPairExtractor:
         """Return an unscored answer candidate from consecutive units."""
 
         answer_text = self._join_text(unit.text for unit in answer_units)
-        if not self._is_plausible_answer_text(answer_text):
+        if not self._is_plausible_answer_for_question(question, answer_text):
             return None
-        answer_text, trim_reason = self._trim_answer_meta_opening(answer_text)
-        if not self._is_plausible_answer_text(answer_text):
+        answer_text, trim_reasons = self._trim_answer_text(answer_text)
+        if not self._is_plausible_answer_for_question(question, answer_text):
             return None
 
         answer_segment_ids = self._ordered_union(
@@ -2174,7 +2545,7 @@ class QAPairExtractor:
                 "distance_units": distance_units,
                 "candidate_span_unit_count": len(answer_units),
             },
-            reason_codes=[trim_reason] if trim_reason else [],
+            reason_codes=trim_reasons,
             metadata={
                 "answer_source": "following_text_units",
                 "search_debug": {
@@ -2200,10 +2571,13 @@ class QAPairExtractor:
         """Return the leading answer text from a unit that also starts a new question."""
 
         answer_prefix = self._extract_leading_answer_before_question(competing_unit.text)
-        if not answer_prefix or not self._is_plausible_answer_text(answer_prefix):
+        if not answer_prefix or not self._is_plausible_answer_for_question(
+            question,
+            answer_prefix,
+        ):
             return None
-        answer_prefix, trim_reason = self._trim_answer_meta_opening(answer_prefix)
-        if not self._is_plausible_answer_text(answer_prefix):
+        answer_prefix, trim_reasons = self._trim_answer_text(answer_prefix)
+        if not self._is_plausible_answer_for_question(question, answer_prefix):
             return None
 
         answer_segment_ids = self._resolve_segment_ids_for_unit(
@@ -2235,7 +2609,7 @@ class QAPairExtractor:
             },
             reason_codes=self._unique_strings(
                 ["answer_before_competing_question"]
-                + ([trim_reason] if trim_reason else []),
+                + trim_reasons,
             ),
             metadata={
                 "answer_source": "competing_question_prefix",
@@ -2243,6 +2617,204 @@ class QAPairExtractor:
                     "candidate_origin": "competing_question_prefix",
                     "candidate_unit_indexes": [competing_unit.index],
                     "candidate_text_ids": [competing_unit.text_id],
+                },
+            },
+        )
+
+    def _build_answer_candidate_with_competing_prefix(
+        self,
+        *,
+        question: QuestionCandidate,
+        answer_units: Sequence[_ExtractionUnit],
+        competing_unit: _ExtractionUnit,
+        answer_prefix: str,
+        distance_units: int,
+        segment_lookup: dict[str, Any],
+    ) -> _AnswerCandidate | None:
+        """Return an answer span extended by text before the next question."""
+
+        if not answer_units:
+            return None
+        if count_tokens(normalize_rule_text(answer_prefix)) < 5:
+            return None
+        combined_units = list(answer_units) + [competing_unit]
+        answer_text = self._join_text(
+            [self._join_text(unit.text for unit in answer_units), answer_prefix],
+        )
+        answer_text, trim_reasons = self._trim_answer_text(answer_text)
+        if not self._is_plausible_answer_for_question(question, answer_text):
+            return None
+        if self._is_answer_question_like(answer_text):
+            return None
+        answer_segment_ids = self._ordered_union(
+            self._resolve_segment_ids_for_unit(unit=unit, segment_lookup=segment_lookup)
+            for unit in combined_units
+        )
+        return _AnswerCandidate(
+            answer_candidate_id=(
+                f"{question.question_candidate_id}_answer_{distance_units:02d}_"
+                "competing_prefix_extended"
+            ),
+            answer_text=answer_text,
+            answer_units=combined_units,
+            answer_unit_ids=self._ordered_union(
+                unit.merged_unit_ids for unit in combined_units
+            ),
+            answer_sentence_ids=self._ordered_union(
+                unit.sentence_ids for unit in combined_units
+            ),
+            answer_source_utterance_ids=self._ordered_union(
+                unit.source_utterance_ids for unit in combined_units
+            ),
+            answer_segment_ids=answer_segment_ids,
+            answer_segment_id=answer_segment_ids[0] if answer_segment_ids else None,
+            answer_score=0.0,
+            distance_units=max(1, distance_units - 1),
+            gap_seconds=max(0.0, answer_units[0].start_seconds - question.unit.end_seconds),
+            search_signals={
+                "answer_source": "following_text_with_competing_prefix",
+                "distance_units": max(1, distance_units - 1),
+                "candidate_span_unit_count": len(combined_units),
+            },
+            reason_codes=self._unique_strings(
+                ["answer_extended_before_competing_question"] + trim_reasons,
+            ),
+            metadata={
+                "answer_source": "following_text_with_competing_prefix",
+                "search_debug": {
+                    "candidate_origin": "following_text_with_competing_prefix",
+                    "candidate_unit_indexes": [
+                        candidate_unit.index for candidate_unit in combined_units
+                    ],
+                    "candidate_text_ids": [
+                        candidate_unit.text_id for candidate_unit in combined_units
+                    ],
+                },
+            },
+        )
+
+    def _build_interview_cluster_answer_candidate(
+        self,
+        *,
+        question: QuestionCandidate,
+        units: Sequence[_ExtractionUnit],
+        question_by_index: dict[int, QuestionCandidate],
+        cluster_start_index: int,
+        segment_lookup: dict[str, Any],
+    ) -> _AnswerCandidate | None:
+        """Return an answer after a short interview-style question cluster."""
+
+        skipped_units: list[_ExtractionUnit] = []
+        answer_start_index: int | None = None
+        saw_interview_bridge = False
+        max_skip_units = 4
+        for candidate_index in range(
+            cluster_start_index,
+            min(len(units), cluster_start_index + max_skip_units + 1),
+        ):
+            candidate_unit = units[candidate_index]
+            if candidate_unit.audio_source_id != question.unit.audio_source_id:
+                return None
+            gap_seconds = max(0.0, candidate_unit.start_seconds - question.unit.end_seconds)
+            if gap_seconds > 45.0:
+                return None
+            bridge_kind = self._interview_bridge_kind(
+                candidate_unit.text,
+                question_text=question.question_text,
+            )
+            if bridge_kind in {"prompt", "echo"}:
+                saw_interview_bridge = True
+            if candidate_index in question_by_index or bridge_kind is not None:
+                skipped_units.append(candidate_unit)
+                continue
+            answer_start_index = candidate_index
+            break
+
+        if answer_start_index is None or not skipped_units or not saw_interview_bridge:
+            return None
+        if len(skipped_units) > max_skip_units:
+            return None
+
+        answer_units: list[_ExtractionUnit] = []
+        for candidate_index in range(
+            answer_start_index,
+            min(len(units), answer_start_index + self.config.max_answer_units),
+        ):
+            candidate_unit = units[candidate_index]
+            if candidate_unit.audio_source_id != question.unit.audio_source_id:
+                break
+            if candidate_index in question_by_index and answer_units:
+                break
+            prospective_units = answer_units + [candidate_unit]
+            if not self._can_use_answer_units(
+                question=question,
+                answer_units=prospective_units,
+                segment_lookup=segment_lookup,
+            ):
+                break
+            if self._units_duration_seconds(prospective_units) > 45.0:
+                break
+            answer_units = prospective_units
+            if count_tokens(normalize_rule_text(self._join_text(unit.text for unit in answer_units))) >= 12:
+                break
+
+        if not answer_units:
+            return None
+        answer_text = self._join_text(unit.text for unit in answer_units)
+        answer_text, trim_reasons = self._trim_answer_text(answer_text)
+        if not self._is_plausible_interview_cluster_answer(
+            question=question,
+            answer_text=answer_text,
+            skipped_units=skipped_units,
+        ):
+            return None
+
+        answer_segment_ids = self._ordered_union(
+            self._resolve_segment_ids_for_unit(unit=unit, segment_lookup=segment_lookup)
+            for unit in answer_units
+        )
+        return _AnswerCandidate(
+            answer_candidate_id=(
+                f"{question.question_candidate_id}_answer_{answer_start_index - question.unit_index:02d}_"
+                "interview_cluster"
+            ),
+            answer_text=answer_text,
+            answer_units=list(answer_units),
+            answer_unit_ids=self._ordered_union(
+                unit.merged_unit_ids for unit in answer_units
+            ),
+            answer_sentence_ids=self._ordered_union(
+                unit.sentence_ids for unit in answer_units
+            ),
+            answer_source_utterance_ids=self._ordered_union(
+                unit.source_utterance_ids for unit in answer_units
+            ),
+            answer_segment_ids=answer_segment_ids,
+            answer_segment_id=answer_segment_ids[0] if answer_segment_ids else None,
+            answer_score=0.0,
+            distance_units=answer_start_index - question.unit_index,
+            gap_seconds=max(0.0, answer_units[0].start_seconds - question.unit.end_seconds),
+            search_signals={
+                "answer_source": "interview_cluster_search",
+                "candidate_channel": "interview_cluster_search",
+                "distance_units": answer_start_index - question.unit_index,
+                "candidate_span_unit_count": len(answer_units),
+                "skipped_question_like_units": len(skipped_units),
+            },
+            reason_codes=self._unique_strings(
+                ["interview_cluster_answer_candidate"] + trim_reasons,
+            ),
+            metadata={
+                "answer_source": "interview_cluster_search",
+                "search_debug": {
+                    "candidate_origin": "interview_cluster_search",
+                    "candidate_unit_indexes": [
+                        candidate_unit.index for candidate_unit in answer_units
+                    ],
+                    "candidate_text_ids": [
+                        candidate_unit.text_id for candidate_unit in answer_units
+                    ],
+                    "skipped_text_ids": [unit.text_id for unit in skipped_units],
                 },
             },
         )
@@ -2360,6 +2932,13 @@ class QAPairExtractor:
         else:
             partial_scores["quality_local_deferred_penalty"] = 0.0
 
+        if answer.search_signals.get("candidate_channel") == "interview_cluster_search":
+            partial_scores["interview_cluster_support"] = 0.20
+            score += 0.20
+            reason_codes.append("interview_cluster_answer_support")
+        else:
+            partial_scores["interview_cluster_support"] = 0.0
+
         if segment_relation == "same_segment":
             partial_scores["segment_relation"] = 0.10
             score += 0.10
@@ -2405,6 +2984,19 @@ class QAPairExtractor:
         score += speaker_support["score_delta"]
         reason_codes.extend(speaker_support["reason_codes"])
 
+        continuation_risk = self._score_monologue_continuation_risk(
+            question=question,
+            answer=answer,
+            qa_alignment=qa_alignment,
+            answer_matches=answer_matches,
+            answer_responsiveness=answer_responsiveness,
+        )
+        partial_scores["monologue_continuation"] = float(
+            continuation_risk["score_delta"],
+        )
+        score += continuation_risk["score_delta"]
+        reason_codes.extend(continuation_risk["reason_codes"])
+
         if search_result.competing_question_stop:
             partial_scores["competing_question_penalty"] = -0.08
             score -= 0.08
@@ -2433,6 +3025,7 @@ class QAPairExtractor:
         answer.metadata["answer_context_debug"] = answer_context["debug"]
         answer.metadata["answer_quality_gate_debug"] = quality_gate["debug"]
         answer.metadata["speaker_pairing_debug"] = speaker_support["debug"]
+        answer.metadata["monologue_continuation_debug"] = continuation_risk["debug"]
         answer.metadata["search_stop_reason"] = search_result.stop_reason
         answer.metadata["competing_question_stop"] = (
             search_result.competing_question_stop
@@ -2473,19 +3066,31 @@ class QAPairExtractor:
             question.question_type,
         )
         has_topical_anchor = bool(shared_keywords or shared_numbers)
+        has_direct_quantity_support = bool(shared_numbers)
+        has_indirect_quantity_support = bool(
+            asks_for_quantity and answer_numbers and not shared_numbers,
+        )
         has_quantity_support = bool(
-            shared_numbers or (asks_for_quantity and answer_numbers),
+            has_direct_quantity_support or has_indirect_quantity_support,
         )
         answer_cue_score = min(0.30, sum(match.weight for match in answer_matches))
+        followup_prompt_answer = self._is_followup_prompt_answer(normalized_answer)
+        socratic_short_answer = self._is_socratic_short_answer_for_question(
+            question=question,
+            answer_text=answer.answer_text,
+        )
 
         score_delta = 0.0
         reason_codes: list[str] = []
         if has_topical_anchor:
             score_delta += 0.07
             reason_codes.append("answer_responsiveness_anchor")
-        if has_quantity_support:
+        if has_direct_quantity_support:
             score_delta += 0.08
             reason_codes.append("answer_responsiveness_quantity_support")
+        elif has_indirect_quantity_support:
+            score_delta += 0.02
+            reason_codes.append("answer_responsiveness_indirect_quantity_support")
 
         answer_only_count = len(answer_only_tokens)
         if answer_only_count >= 3:
@@ -2494,6 +3099,26 @@ class QAPairExtractor:
         elif answer_only_count <= 1 and not has_quantity_support:
             score_delta -= 0.10
             reason_codes.append("answer_responsiveness_low_substance")
+
+        if (
+            answer_only_count <= 2
+            and answer_cue_score <= 0.0
+            and not has_direct_quantity_support
+            and not socratic_short_answer
+        ):
+            score_delta -= 0.10
+            reason_codes.append("answer_responsiveness_thin_reply")
+        elif socratic_short_answer:
+            score_delta += 0.04
+            reason_codes.append("answer_responsiveness_socratic_short_answer")
+
+        if (
+            has_indirect_quantity_support
+            and answer_cue_score <= 0.10
+            and answer_only_count > 6
+        ):
+            score_delta -= 0.18
+            reason_codes.append("answer_responsiveness_unanchored_quantity")
 
         contextual_question = bool(
             self._is_contextual_question(question.question_text)
@@ -2528,23 +3153,35 @@ class QAPairExtractor:
             score_delta -= 0.12
             reason_codes.append("answer_responsiveness_answer_is_question")
 
-        score_delta = max(-0.24, min(0.06, score_delta))
-        responsiveness_score = self._clamp(0.55 + (score_delta * 1.6))
-        if score_delta <= -0.10:
+        if followup_prompt_answer:
+            score_delta -= 0.22
+            reason_codes.append("answer_responsiveness_followup_prompt")
+
+        raw_score_delta = score_delta
+        ranking_score_delta = max(-0.24, min(0.06, raw_score_delta))
+        responsiveness_score = self._clamp(0.55 + (raw_score_delta * 1.6))
+        if raw_score_delta <= -0.10:
             reason_codes.append("answer_responsiveness_weak")
-        elif score_delta >= 0.05:
+        elif raw_score_delta >= 0.05:
             reason_codes.append("answer_responsiveness_strong")
 
         return {
-            "score_delta": round(score_delta, 4),
+            "score_delta": round(ranking_score_delta, 4),
             "reason_codes": self._unique_strings(reason_codes),
             "debug": {
                 "score": round(responsiveness_score, 4),
-                "score_delta": round(score_delta, 4),
+                "score_delta": round(ranking_score_delta, 4),
+                "raw_score_delta": round(raw_score_delta, 4),
                 "has_topical_anchor": has_topical_anchor,
                 "has_quantity_support": has_quantity_support,
+                "has_direct_quantity_support": has_direct_quantity_support,
+                "has_indirect_quantity_support": has_indirect_quantity_support,
+                "shared_keyword_count": len(shared_keywords),
+                "shared_number_count": len(shared_numbers),
                 "answer_only_token_count": answer_only_count,
                 "answer_cue_score": round(answer_cue_score, 4),
+                "followup_prompt_answer": followup_prompt_answer,
+                "socratic_short_answer": socratic_short_answer,
             },
         }
 
@@ -2634,6 +3271,10 @@ class QAPairExtractor:
         reason_codes: list[str] = []
         normalized_answer = normalize_rule_text(answer.answer_text)
         normalized_question = normalize_rule_text(question.question_text)
+        socratic_short_answer = self._is_socratic_short_answer_for_question(
+            question=question,
+            answer_text=answer.answer_text,
+        )
 
         if self._is_moderator_handoff_answer(normalized_answer):
             score_delta -= 0.22
@@ -2643,13 +3284,17 @@ class QAPairExtractor:
             score_delta -= 0.26
             reason_codes.append("answer_boilerplate_penalty")
 
+        if self._is_question_continuation_answer(normalized_answer):
+            score_delta -= 0.24
+            reason_codes.append("question_continuation_answer_penalty")
+
         if answer.distance_units == 0 and answer.answer_sentence_ids and set(
             answer.answer_sentence_ids,
         ).intersection(question.question_sentence_ids):
             score_delta -= 0.16
             reason_codes.append("same_sentence_answer_penalty")
             answer_matches = collect_rule_matches(normalized_answer, ANSWER_CUE_RULES)
-            if not answer_matches:
+            if not answer_matches and not socratic_short_answer:
                 score_delta -= 0.26
                 reason_codes.append("same_sentence_without_answer_cue")
 
@@ -2671,12 +3316,14 @@ class QAPairExtractor:
         if (
             overlap_ratio >= 0.72
             and added_answer_token_count <= 1
+            and not socratic_short_answer
         ):
             score_delta -= 0.28
             reason_codes.append("answer_echoes_question_penalty")
         elif (
             question_coverage_ratio >= 0.68
             and added_answer_token_count <= 2
+            and not socratic_short_answer
         ):
             score_delta -= 0.22
             reason_codes.append("answer_circular_echo_penalty")
@@ -2687,9 +3334,14 @@ class QAPairExtractor:
             count_tokens(normalized_answer) <= 4
             and not answer_matches
             and not answer_numbers
+            and not socratic_short_answer
         ):
             score_delta -= 0.12
             reason_codes.append("low_information_answer_penalty")
+
+        if socratic_short_answer:
+            score_delta += 0.08
+            reason_codes.append("socratic_short_answer_support")
 
         if self._looks_like_incomplete_answer_span(answer.answer_text):
             score_delta -= 0.10
@@ -2704,7 +3356,18 @@ class QAPairExtractor:
         shared_keywords = cue_alignment.get("shared_keywords") or []
         answer_cue_score = min(0.30, sum(match.weight for match in answer_matches))
         relevance_score = float(cue_alignment.get("relevance_score") or 0.0)
-        if answer_cue_score > 0.0 and relevance_score <= 0.0 and not shared_keywords:
+        local_explanatory_why_answer = (
+            question.question_type == "why"
+            and answer.distance_units <= 1
+            and answer.gap_seconds <= 12.0
+            and _CAUSAL_ANSWER_AFTER_WHY_RE.match(normalized_answer)
+        )
+        if (
+            answer_cue_score > 0.0
+            and relevance_score <= 0.0
+            and not shared_keywords
+            and not local_explanatory_why_answer
+        ):
             score_delta -= 0.18
             reason_codes.append("surface_answer_cue_penalty")
 
@@ -2723,9 +3386,102 @@ class QAPairExtractor:
                 "added_answer_token_count": added_answer_token_count,
                 "overlap_ratio": round(overlap_ratio, 4),
                 "question_coverage_ratio": round(question_coverage_ratio, 4),
+                "socratic_short_answer": socratic_short_answer,
                 "score_delta": round(score_delta, 4),
             },
         }
+
+    def _is_socratic_short_answer(self, *, question_text: str, answer_text: str) -> bool:
+        """Return whether a short answer resolves a short Socratic prompt."""
+
+        question_tokens = self._content_token_list(question_text)
+        answer_tokens = self._content_token_list(answer_text)
+        if not question_tokens or not answer_tokens:
+            return False
+        normalized_question = normalize_rule_text(question_text).rstrip(" ?.!").strip()
+        if re.match(
+            r"^(?:what\s+(?:is|are)|cosa\s+(?:e|sono)|che\s+cosa\s+(?:e|sono))\b",
+            normalized_question,
+        ):
+            return False
+        if len(question_tokens) > 4 or len(answer_tokens) > 8:
+            return False
+        question_token_set = set(question_tokens)
+        answer_token_set = set(answer_tokens)
+        added_token_count = len(answer_token_set - question_token_set)
+        if added_token_count < 1:
+            return False
+        if self._is_incomplete_numeric_short_answer(
+            answer_tokens=answer_tokens,
+            question_token_set=question_token_set,
+        ):
+            return False
+        if (
+            self._is_object_gap_socratic_question(normalized_question)
+            and answer_tokens[0] in question_token_set
+        ):
+            return True
+        if answer_tokens[0] in question_token_set and added_token_count >= 2:
+            return True
+        return bool(question_token_set & answer_token_set) and (
+            question_tokens[-1] in {"che", "cosa", "what"}
+            or self._is_terminal_object_question(normalize_rule_text(question_text))
+        )
+
+    def _is_socratic_short_answer_for_question(
+        self,
+        *,
+        question: QuestionCandidate,
+        answer_text: str,
+    ) -> bool:
+        """Return whether an answer resolves the current or focused question."""
+
+        if self._is_socratic_short_answer(
+            question_text=question.question_text,
+            answer_text=answer_text,
+        ):
+            return True
+        focused_question = str(
+            question.metadata.get("normalized_question_text") or "",
+        ).strip()
+        if not focused_question:
+            return False
+        return self._is_socratic_short_answer(
+            question_text=focused_question,
+            answer_text=answer_text,
+        )
+
+    def _is_object_gap_socratic_question(self, normalized_question: str) -> bool:
+        """Return whether a short prompt asks for the missing object/result."""
+
+        stripped = normalized_question.rstrip(" ?.!").strip()
+        if self._is_terminal_object_question(stripped):
+            return True
+        return bool(
+            re.match(
+                r"^(?:"
+                r"what\s+do\s+(?:i|we|you|they)\s+\w+"
+                r"|cosa\s+\w+"
+                r"|che\s+cosa\s+\w+"
+                r")\b",
+                stripped,
+            ),
+        )
+
+    @staticmethod
+    def _is_incomplete_numeric_short_answer(
+        *,
+        answer_tokens: Sequence[str],
+        question_token_set: set[str],
+    ) -> bool:
+        """Return whether a short answer likely stops after a bare number."""
+
+        if len(answer_tokens) > 3:
+            return False
+        if answer_tokens[-1] not in _POLL_OPTION_WORDS:
+            return False
+        added_tokens = set(answer_tokens) - question_token_set
+        return bool(added_tokens) and added_tokens <= _POLL_OPTION_WORDS
 
     def _score_answer_span_completeness(
         self,
@@ -2775,8 +3531,8 @@ class QAPairExtractor:
             ):
                 score_delta += 0.12
                 reason_codes.append("answer_span_extension_support")
-            elif first_incomplete and full_has_signal and token_count <= 70:
-                score_delta += 0.08
+            elif first_incomplete and token_count <= 70:
+                score_delta += 0.10 if full_has_signal else 0.06
                 reason_codes.append("answer_span_completion_support")
             elif token_count > 80:
                 score_delta -= 0.08
@@ -2876,6 +3632,99 @@ class QAPairExtractor:
                 "soft_penalty_mode": soft_penalty_mode,
                 "question_profile": question_profile,
                 "answer_profile": answer_profile,
+                "score_delta": round(score_delta, 4),
+            },
+        }
+
+    def _score_monologue_continuation_risk(
+        self,
+        *,
+        question: QuestionCandidate,
+        answer: _AnswerCandidate,
+        qa_alignment: dict[str, Any],
+        answer_matches: Sequence[Any],
+        answer_responsiveness: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Penalize local answers that look like same-speaker continuation."""
+
+        answer_source = str(answer.search_signals.get("answer_source") or "")
+        local_answer = answer_source in {"following_text_units", "same_text_unit_seed"}
+        adjacent = answer.distance_units <= 1 and answer.gap_seconds <= 6.0
+        question_profile = self._speaker_profile(question.unit)
+        answer_profile = self._speaker_profile_from_units(answer.answer_units)
+        reliable_turn = (
+            question_profile["reliability"] == "reliable"
+            and answer_profile["reliability"] == "reliable"
+            and question_profile["speaker_id"] != answer_profile["speaker_id"]
+        )
+        reliable_same_speaker = (
+            question_profile["reliability"] == "reliable"
+            and answer_profile["reliability"] == "reliable"
+            and question_profile["speaker_id"] == answer_profile["speaker_id"]
+        )
+        missing_speaker_boundary = (
+            question_profile["reliability"] == "missing"
+            or answer_profile["reliability"] == "missing"
+        )
+        responsiveness_debug = answer_responsiveness.get("debug", {})
+        has_anchor = bool(
+            qa_alignment.get("shared_keywords")
+            or qa_alignment.get("shared_numbers")
+            or responsiveness_debug.get("has_topical_anchor")
+            or responsiveness_debug.get("has_quantity_support")
+        )
+        answer_cue_score = min(0.30, sum(match.weight for match in answer_matches))
+        answer_only_count = int(responsiveness_debug.get("answer_only_token_count") or 0)
+        question_intent = str(question.metadata.get("question_intent") or "")
+        weak_question_intent = question_intent in {
+            "embedded_statement_question",
+            "weak_question_form",
+            "rhetorical_tag",
+            "poll_or_check",
+            "fragment",
+            "subordinate_fragment",
+        }
+        weak_response = (
+            "answer_responsiveness_weak" in answer_responsiveness.get("reason_codes", [])
+            or (not has_anchor and answer_cue_score <= 0.0)
+            or (answer_only_count <= 2 and not has_anchor)
+        )
+        meta_opening_trimmed = "answer_meta_opening_trimmed" in answer.reason_codes
+
+        score_delta = 0.0
+        reason_codes: list[str] = []
+        if local_answer and adjacent and not reliable_turn:
+            if weak_response and (weak_question_intent or reliable_same_speaker):
+                score_delta = -0.22
+                reason_codes.append("monologue_continuation_risk")
+            elif (
+                self.config.pipeline_profile == "quality_local"
+                and weak_response
+                and missing_speaker_boundary
+                and not meta_opening_trimmed
+            ):
+                score_delta = -0.16
+                reason_codes.append("monologue_continuation_risk")
+            elif weak_question_intent and answer_cue_score <= 0.0:
+                score_delta = -0.10
+                reason_codes.append("monologue_continuation_risk")
+
+        return {
+            "score_delta": round(score_delta, 4),
+            "reason_codes": self._unique_strings(reason_codes),
+            "debug": {
+                "local_answer": local_answer,
+                "adjacent": adjacent,
+                "reliable_turn": reliable_turn,
+                "reliable_same_speaker": reliable_same_speaker,
+                "missing_speaker_boundary": missing_speaker_boundary,
+                "has_anchor": has_anchor,
+                "answer_cue_score": round(answer_cue_score, 4),
+                "answer_only_token_count": answer_only_count,
+                "question_intent": question_intent,
+                "weak_question_intent": weak_question_intent,
+                "weak_response": weak_response,
+                "meta_opening_trimmed": meta_opening_trimmed,
                 "score_delta": round(score_delta, 4),
             },
         }
@@ -3008,6 +3857,12 @@ class QAPairExtractor:
             units=units,
             search_result=search_result,
         )
+        quality_context_extraction = self._extract_qa_context_for_quality_gate(
+            question=question,
+            answer=answer,
+            units=units,
+            search_result=search_result,
+        )
 
         reason_codes = self._unique_strings(
             question.reason_codes + answer.reason_codes + [segment_relation],
@@ -3032,7 +3887,7 @@ class QAPairExtractor:
         quality_features = self._build_candidate_quality_features(
             question=question,
             answer=answer,
-            context_extraction=context_extraction,
+            context_extraction=quality_context_extraction,
             confidence=confidence,
             input_layer=input_layer,
             segment_relation=segment_relation,
@@ -3156,6 +4011,13 @@ class QAPairExtractor:
                 "context_raw_text": context_extraction.context_raw_text,
                 "context_strategy": context_extraction.context_strategy,
                 "context_confidence": context_extraction.context_confidence,
+                "context_selection_score": (
+                    context_extraction.context_selection_score
+                ),
+                "context_reasons": context_extraction.context_reasons,
+                "candidate_context_count": (
+                    context_extraction.candidate_context_count
+                ),
                 "context_sentence_ids": context_extraction.context_sentence_ids,
                 "context_source_utterance_ids": (
                     context_extraction.context_source_utterance_ids
@@ -3229,6 +4091,114 @@ class QAPairExtractor:
     ) -> _ContextExtraction:
         """Return short contextual text that makes one QA pair understandable."""
 
+        context_selection = _ContextSelection()
+        context_strategy: str | None = None
+        context_confidence: str | None = None
+
+        if answer.distance_units == 0 and question.local_answer_seed:
+            context_selection = _ContextSelection(
+                units=[question.unit],
+                score=0.90,
+                reasons=["intra_sentence_context"],
+                candidate_count=1,
+            )
+            context_strategy = "intra_sentence_context"
+            context_confidence = "high"
+        elif question.metadata.get("question_context_expanded"):
+            context_selection = _ContextSelection(
+                units=question.question_units[:-1] or question.question_units,
+                score=0.85,
+                reasons=["expanded_question_context"],
+                candidate_count=len(question.question_units),
+            )
+            context_strategy = "previous_sentence_context"
+            context_confidence = "high"
+        elif bool(search_result.metadata.get("deferred_answer_search_used")):
+            context_selection = self._deferred_context_units(question, answer, units)
+            context_strategy = "deferred_answer_context"
+            context_confidence = "medium"
+        else:
+            context_selection = self._local_topic_context_units(question, answer, units)
+            context_strategy = "local_topic_window"
+            context_confidence = "medium"
+
+        context_units = self._dedupe_context_units(
+            context_selection.units,
+            question,
+            answer,
+        )
+        context_selection = self._context_selection_debug(
+            question=question,
+            answer=answer,
+            context_units=context_units,
+            strategy=context_strategy,
+            candidate_count=context_selection.candidate_count,
+            fallback_reasons=context_selection.reasons,
+        )
+        if not context_units:
+            context_selection = self._fallback_context_units(question, answer, units)
+            context_units = self._dedupe_context_units(
+                context_selection.units,
+                question,
+                answer,
+            )
+            context_strategy = "fallback_previous_context"
+            context_confidence = "low"
+            context_selection = self._context_selection_debug(
+                question=question,
+                answer=answer,
+                context_units=context_units,
+                strategy=context_strategy,
+                candidate_count=context_selection.candidate_count,
+                fallback_reasons=context_selection.reasons,
+            )
+        context_raw_text = self._build_context_raw_text(context_units)
+        context_text = self._summarize_context_text(
+            question=question,
+            answer=answer,
+            context_units=context_units,
+            context_raw_text=context_raw_text,
+            context_strategy=context_strategy,
+        )
+        if not context_text:
+            return _ContextExtraction(
+                context_text=None,
+                context_raw_text=None,
+                context_units=[],
+                context_strategy=None,
+                context_confidence=None,
+                context_selection_score=context_selection.score,
+                context_reasons=context_selection.reasons,
+                candidate_context_count=context_selection.candidate_count,
+            )
+
+        return _ContextExtraction(
+            context_text=context_text,
+            context_raw_text=context_raw_text,
+            context_units=context_units,
+            context_sentence_ids=self._ordered_union(
+                unit.sentence_ids for unit in context_units
+            ),
+            context_source_utterance_ids=self._ordered_union(
+                unit.source_utterance_ids for unit in context_units
+            ),
+            context_strategy=context_strategy,
+            context_confidence=context_confidence,
+            context_selection_score=context_selection.score,
+            context_reasons=context_selection.reasons,
+            candidate_context_count=context_selection.candidate_count,
+        )
+
+    def _extract_qa_context_for_quality_gate(
+        self,
+        *,
+        question: QuestionCandidate,
+        answer: _AnswerCandidate,
+        units: Sequence[_ExtractionUnit],
+        search_result: _AnswerSearchResult,
+    ) -> _ContextExtraction:
+        """Return legacy context semantics used only to keep QA gating stable."""
+
         context_units: list[_ExtractionUnit] = []
         context_strategy: str | None = None
         context_confidence: str | None = None
@@ -3242,19 +4212,32 @@ class QAPairExtractor:
             context_strategy = "previous_sentence_context"
             context_confidence = "high"
         elif bool(search_result.metadata.get("deferred_answer_search_used")):
-            context_units = self._deferred_context_units(question, answer, units)
+            context_units = self._legacy_deferred_context_units_for_quality(
+                question,
+                answer,
+                units,
+            )
             context_strategy = "deferred_answer_context"
             context_confidence = "medium"
         else:
-            context_units = self._local_topic_context_units(question, answer, units)
+            context_units = self._legacy_local_context_units_for_quality(
+                question,
+                answer,
+                units,
+            )
             context_strategy = "local_topic_window"
             context_confidence = "medium"
 
         context_units = self._dedupe_context_units(context_units, question, answer)
         if not context_units:
-            context_units = self._fallback_context_units(question, answer, units)
+            context_units = self._legacy_fallback_context_units_for_quality(
+                question,
+                answer,
+                units,
+            )
             context_strategy = "fallback_previous_context"
             context_confidence = "low"
+
         context_raw_text = self._build_context_raw_text(context_units)
         context_text = self._summarize_context_text(
             question=question,
@@ -3271,7 +4254,6 @@ class QAPairExtractor:
                 context_strategy=None,
                 context_confidence=None,
             )
-
         return _ContextExtraction(
             context_text=context_text,
             context_raw_text=context_raw_text,
@@ -3286,13 +4268,13 @@ class QAPairExtractor:
             context_confidence=context_confidence,
         )
 
-    def _local_topic_context_units(
+    def _legacy_local_context_units_for_quality(
         self,
         question: QuestionCandidate,
         answer: _AnswerCandidate,
         units: Sequence[_ExtractionUnit],
     ) -> list[_ExtractionUnit]:
-        """Return nearby topic-bearing units for local question context."""
+        """Return the pre-context-v1 local context used for stable QA gating."""
 
         context_units: list[_ExtractionUnit] = []
         question_start_index = question.question_units[0].index
@@ -3302,8 +4284,7 @@ class QAPairExtractor:
                 continue
             if self._unit_has_topic_overlap(question=question, unit=candidate_unit):
                 context_units.append(candidate_unit)
-
-        if not context_units and question.metadata.get("question_preamble"):
+        if not context_units and self._usable_question_preamble_context(question):
             context_units.append(question.unit)
         if answer.distance_units <= 1 and not context_units:
             previous_index = max(0, question.unit_index - 1)
@@ -3313,13 +4294,13 @@ class QAPairExtractor:
                     context_units.append(previous_unit)
         return context_units
 
-    def _deferred_context_units(
+    def _legacy_deferred_context_units_for_quality(
         self,
         question: QuestionCandidate,
         answer: _AnswerCandidate,
         units: Sequence[_ExtractionUnit],
     ) -> list[_ExtractionUnit]:
-        """Return context units for answers discovered beyond the local window."""
+        """Return the pre-context-v1 deferred context used for stable QA gating."""
 
         context_units: list[_ExtractionUnit] = []
         question_start_index = question.question_units[0].index
@@ -3330,25 +4311,23 @@ class QAPairExtractor:
                 continue
             if self._unit_has_topic_overlap(question=question, unit=candidate_unit):
                 context_units.append(candidate_unit)
-
         for candidate_index in range(max(question.unit_index + 1, answer_start_index - 2), answer_start_index):
             candidate_unit = units[candidate_index]
             if candidate_unit.audio_source_id != question.unit.audio_source_id:
                 continue
             if self._unit_has_topic_overlap(question=question, unit=candidate_unit):
                 context_units.append(candidate_unit)
-
-        if not context_units and question.metadata.get("question_preamble"):
+        if not context_units and self._usable_question_preamble_context(question):
             context_units.append(question.unit)
         return context_units
 
-    def _fallback_context_units(
+    def _legacy_fallback_context_units_for_quality(
         self,
         question: QuestionCandidate,
         answer: _AnswerCandidate,
         units: Sequence[_ExtractionUnit],
     ) -> list[_ExtractionUnit]:
-        """Return nearby setup when topic matching found no context."""
+        """Return the pre-context-v1 fallback context used for stable QA gating."""
 
         del answer
         fallback_units: list[_ExtractionUnit] = []
@@ -3364,9 +4343,335 @@ class QAPairExtractor:
             fallback_units.append(candidate_unit)
         if fallback_units:
             return fallback_units
-        if question.metadata.get("question_preamble"):
+        if self._usable_question_preamble_context(question):
             return [question.unit]
         return []
+
+    def _local_topic_context_units(
+        self,
+        question: QuestionCandidate,
+        answer: _AnswerCandidate,
+        units: Sequence[_ExtractionUnit],
+    ) -> _ContextSelection:
+        """Return nearby topic-bearing units for local question context."""
+
+        question_start_index = question.question_units[0].index
+        candidate_units: list[_ExtractionUnit] = []
+        for candidate_index in range(max(0, question_start_index - 2), question_start_index):
+            candidate_unit = units[candidate_index]
+            if candidate_unit.audio_source_id != question.unit.audio_source_id:
+                continue
+            candidate_units.append(candidate_unit)
+
+        selection = self._select_context_units(
+            question=question,
+            answer=answer,
+            candidate_units=candidate_units,
+            strategy="local_topic_window",
+        )
+        if selection.units:
+            return selection
+        if candidate_units and self._is_contextual_question(question.question_text):
+            contextual_selection = self._select_context_units(
+                question=question,
+                answer=answer,
+                candidate_units=[candidate_units[-1]],
+                strategy="fallback_previous_context",
+                allow_weak=True,
+            )
+            if contextual_selection.units:
+                contextual_selection.reasons = self._unique_strings(
+                    ["contextual_followup_context"] + contextual_selection.reasons,
+                )[:6]
+                return contextual_selection
+        if self._usable_question_preamble_context(question):
+            return _ContextSelection(
+                units=[question.unit],
+                score=0.72,
+                reasons=["question_preamble_context"],
+                candidate_count=max(1, selection.candidate_count),
+            )
+        if answer.distance_units <= 1:
+            previous_index = max(0, question.unit_index - 1)
+            if previous_index != question.unit_index:
+                previous_unit = units[previous_index]
+                if previous_unit.audio_source_id == question.unit.audio_source_id:
+                    return self._select_context_units(
+                        question=question,
+                        answer=answer,
+                        candidate_units=[previous_unit],
+                        strategy="local_topic_window",
+                        allow_weak=True,
+                    )
+        return selection
+
+    def _deferred_context_units(
+        self,
+        question: QuestionCandidate,
+        answer: _AnswerCandidate,
+        units: Sequence[_ExtractionUnit],
+    ) -> _ContextSelection:
+        """Return context units for answers discovered beyond the local window."""
+
+        candidate_units: list[_ExtractionUnit] = []
+        answer_bridge_units: list[_ExtractionUnit] = []
+        question_start_index = question.question_units[0].index
+        answer_start_index = answer.answer_units[0].index
+        for candidate_index in range(max(0, question_start_index - 2), question.unit_index):
+            candidate_unit = units[candidate_index]
+            if candidate_unit.audio_source_id != question.unit.audio_source_id:
+                continue
+            candidate_units.append(candidate_unit)
+
+        for candidate_index in range(max(question.unit_index + 1, answer_start_index - 2), answer_start_index):
+            candidate_unit = units[candidate_index]
+            if candidate_unit.audio_source_id != question.unit.audio_source_id:
+                continue
+            candidate_units.append(candidate_unit)
+            answer_bridge_units.append(candidate_unit)
+
+        selection = self._select_context_units(
+            question=question,
+            answer=answer,
+            candidate_units=candidate_units,
+            strategy="deferred_answer_context",
+        )
+        if selection.units:
+            return selection
+        bridge_selection = self._select_context_units(
+            question=question,
+            answer=answer,
+            candidate_units=answer_bridge_units,
+            strategy="fallback_previous_context",
+            allow_weak=False,
+        )
+        if bridge_selection.units:
+            bridge_selection.reasons = self._unique_strings(
+                ["deferred_answer_bridge_context"] + bridge_selection.reasons,
+            )[:6]
+            return bridge_selection
+        if self._usable_question_preamble_context(question):
+            return _ContextSelection(
+                units=[question.unit],
+                score=0.68,
+                reasons=["question_preamble_context"],
+                candidate_count=max(1, selection.candidate_count),
+            )
+        return selection
+
+    def _fallback_context_units(
+        self,
+        question: QuestionCandidate,
+        answer: _AnswerCandidate,
+        units: Sequence[_ExtractionUnit],
+    ) -> _ContextSelection:
+        """Return nearby setup when topic matching found no context."""
+
+        question_start_index = question.question_units[0].index
+        fallback_units: list[_ExtractionUnit] = []
+        for candidate_index in range(max(0, question_start_index - 2), question_start_index):
+            candidate_unit = units[candidate_index]
+            if candidate_unit.audio_source_id != question.unit.audio_source_id:
+                continue
+            if self._is_context_filler_candidate(
+                normalize_rule_text(candidate_unit.text),
+            ):
+                continue
+            fallback_units.append(candidate_unit)
+        if fallback_units:
+            return self._select_context_units(
+                question=question,
+                answer=answer,
+                candidate_units=fallback_units,
+                strategy="fallback_previous_context",
+                allow_weak=True,
+            )
+        if self._usable_question_preamble_context(question):
+            return _ContextSelection(
+                units=[question.unit],
+                score=0.55,
+                reasons=["question_preamble_context"],
+                candidate_count=1,
+            )
+        return _ContextSelection(candidate_count=len(fallback_units))
+
+    def _select_context_units(
+        self,
+        *,
+        question: QuestionCandidate,
+        answer: _AnswerCandidate,
+        candidate_units: Sequence[_ExtractionUnit],
+        strategy: str,
+        allow_weak: bool = False,
+    ) -> _ContextSelection:
+        """Return the best extractive context units and compact diagnostics."""
+
+        scored_units: list[tuple[float, _ExtractionUnit, list[str]]] = []
+        seen_text_ids: set[str] = set()
+        candidate_count = 0
+        for unit in candidate_units:
+            if unit.text_id in seen_text_ids:
+                continue
+            seen_text_ids.add(unit.text_id)
+            candidate_count += 1
+            score, reasons = self._score_context_candidate(
+                question=question,
+                answer=answer,
+                unit=unit,
+                strategy=strategy,
+            )
+            toxic_weak_context = any(
+                reason in reasons
+                for reason in (
+                    "competing_question_context",
+                    "duplicate_question_context",
+                    "filler_context_candidate",
+                    "incomplete_context_candidate",
+                    "thin_context_candidate",
+                )
+            )
+            if toxic_weak_context:
+                continue
+            if score <= 0.0 and not allow_weak:
+                continue
+            scored_units.append((score, unit, reasons))
+
+        if not scored_units:
+            return _ContextSelection(candidate_count=candidate_count)
+
+        scored_units.sort(key=lambda item: (-item[0], item[1].index))
+        selected_items = scored_units[:2]
+        selected_units = sorted((item[1] for item in selected_items), key=lambda unit: unit.index)
+        reasons = self._unique_strings(
+            reason for item in selected_items for reason in item[2]
+        )[:6]
+        score = self._clamp(
+            sum(max(0.0, item[0]) for item in selected_items) / len(selected_items),
+        )
+        return _ContextSelection(
+            units=selected_units,
+            score=round(score, 4),
+            reasons=reasons,
+            candidate_count=candidate_count,
+        )
+
+    def _context_selection_debug(
+        self,
+        *,
+        question: QuestionCandidate,
+        answer: _AnswerCandidate,
+        context_units: Sequence[_ExtractionUnit],
+        strategy: str | None,
+        candidate_count: int,
+        fallback_reasons: Sequence[str],
+    ) -> _ContextSelection:
+        """Recompute compact diagnostics after deduping selected context units."""
+
+        if not context_units:
+            return _ContextSelection(
+                score=0.0,
+                reasons=list(fallback_reasons),
+                candidate_count=candidate_count,
+            )
+        scored_units = [
+            self._score_context_candidate(
+                question=question,
+                answer=answer,
+                unit=unit,
+                strategy=strategy or "context",
+            )
+            for unit in context_units
+        ]
+        score = self._clamp(
+            sum(max(0.0, item[0]) for item in scored_units) / len(scored_units),
+        )
+        reasons = self._unique_strings(
+            list(fallback_reasons)
+            + [reason for _, item_reasons in scored_units for reason in item_reasons]
+        )[:6]
+        return _ContextSelection(
+            units=list(context_units),
+            score=round(score, 4),
+            reasons=reasons,
+            candidate_count=max(candidate_count, len(context_units)),
+        )
+
+    def _score_context_candidate(
+        self,
+        *,
+        question: QuestionCandidate,
+        answer: _AnswerCandidate,
+        unit: _ExtractionUnit,
+        strategy: str,
+    ) -> tuple[float, list[str]]:
+        """Score one nearby unit as readable extractive context."""
+
+        normalized_text = normalize_rule_text(unit.text)
+        unit_tokens = self._content_tokens(unit.text)
+        question_tokens = self._content_tokens(question.question_text)
+        answer_tokens = self._content_tokens(answer.answer_text)
+        shared_question_tokens = unit_tokens & question_tokens
+        shared_answer_tokens = unit_tokens & answer_tokens
+        shared_numbers = self._number_tokens(unit.text) & (
+            self._number_tokens(question.question_text)
+            | self._number_tokens(answer.answer_text)
+        )
+
+        score = 0.05
+        reasons: list[str] = []
+        if self._context_duplicates_question(unit.text, question.question_text):
+            score -= 0.55
+            reasons.append("duplicate_question_context")
+        if shared_question_tokens:
+            score += min(0.30, 0.08 * len(shared_question_tokens))
+            reasons.append("question_topic_overlap")
+        if shared_answer_tokens:
+            score += min(0.20, 0.05 * len(shared_answer_tokens))
+            reasons.append("answer_topic_overlap")
+        if shared_numbers:
+            score += 0.16
+            reasons.append("shared_number_context")
+
+        token_count = len(unit_tokens)
+        if token_count >= 8:
+            score += 0.12
+            reasons.append("substantive_context")
+        elif token_count >= 5:
+            score += 0.08
+            reasons.append("usable_context")
+        elif token_count <= 2:
+            score -= 0.22
+            reasons.append("thin_context_candidate")
+        elif token_count <= 4:
+            score -= 0.08
+            reasons.append("short_context_candidate")
+
+        has_overlap = bool(shared_question_tokens or shared_answer_tokens or shared_numbers)
+        if not has_overlap and strategy != "fallback_previous_context":
+            score -= 0.28
+            reasons.append("low_topic_overlap")
+        elif not has_overlap:
+            score += 0.04
+            reasons.append("nearby_setup_context")
+
+        if unit.source_utterance_ids:
+            score += 0.03
+        if unit.sentence_ids:
+            score += 0.02
+        if unit.semantic_quality_label in {"fragment", "run_on"}:
+            score -= 0.08
+            reasons.append("weak_boundary_context")
+        if self._looks_like_incomplete_answer_span(unit.text):
+            score -= 0.20
+            reasons.append("incomplete_context_candidate")
+        if self._is_context_filler_candidate(normalized_text):
+            score -= 0.35
+            reasons.append("filler_context_candidate")
+        if self._is_answer_question_like(unit.text):
+            score -= 0.42
+            reasons.append("competing_question_context")
+
+        return score, self._unique_strings(reasons)
 
     def _dedupe_context_units(
         self,
@@ -3395,6 +4700,14 @@ class QAPairExtractor:
                 and set(unit.sentence_ids).issubset(question_sentence_ids)
                 and not question.metadata.get("question_preamble")
                 and not question.metadata.get("question_context_expanded")
+            ):
+                continue
+            if (
+                self._context_duplicates_question(unit.text, question.question_text)
+                and (
+                    not question.metadata.get("question_context_expanded")
+                    or self._is_answer_question_like(unit.text)
+                )
             ):
                 continue
             deduped_units.append(unit)
@@ -3461,7 +4774,7 @@ class QAPairExtractor:
             )
         if context_strategy == "previous_sentence_context" and context_raw_text:
             return self._limit_context_text(context_raw_text, max_chars=250)
-        if question.metadata.get("question_preamble"):
+        if self._usable_question_preamble_context(question):
             preamble = self._clean_context_sentence(
                 str(question.metadata.get("question_preamble") or ""),
             )
@@ -3501,6 +4814,68 @@ class QAPairExtractor:
         )
 
     @staticmethod
+    def _is_context_filler_candidate(normalized_text: str) -> bool:
+        """Return whether a context unit is only transition/filler material."""
+
+        stripped = normalized_text.rstrip(" ?.!").strip()
+        if not stripped:
+            return True
+        if stripped in _FILLER_ANSWERS:
+            return True
+        token_count = count_tokens(stripped)
+        if token_count <= 2 and stripped in {"well", "okay", "ok", "right", "yeah"}:
+            return True
+        if re.search(r"\b(?:q\s*&\s*a|q&a|questions?)\b", stripped):
+            return True
+        if re.search(r"\bplease\s+bear\s+with\s+me\b", stripped):
+            return True
+        if re.match(r"^(?:i|we)\s+(?:do\s+not|don't)\s+know\b", stripped):
+            return True
+        return bool(
+            re.fullmatch(
+                r"(?:let'?s|let us|we(?:'| a)?re going to)\s+"
+                r"(?:move|turn|go|continue|pause|stop|start)\b.*",
+                stripped,
+            )
+        )
+
+    def _context_duplicates_question(self, context_text: str, question_text: str) -> bool:
+        """Return whether a context unit mostly repeats the selected question."""
+
+        normalized_context = normalize_rule_text(context_text).rstrip(" ?.!").strip()
+        normalized_question = normalize_rule_text(question_text).rstrip(" ?.!").strip()
+        if not normalized_context or not normalized_question:
+            return False
+        if normalized_context == normalized_question:
+            return True
+        context_tokens = self._content_tokens(normalized_context)
+        question_tokens = self._content_tokens(normalized_question)
+        if len(context_tokens) < 3 or not question_tokens:
+            return False
+        overlap = len(context_tokens & question_tokens)
+        return (
+            overlap / max(1, len(context_tokens)) >= 0.82
+            and overlap / max(1, len(question_tokens)) >= 0.70
+        )
+
+    def _usable_question_preamble_context(self, question: QuestionCandidate) -> bool:
+        """Return whether the extracted question preamble is useful as context."""
+
+        preamble = self._clean_context_sentence(
+            str(question.metadata.get("question_preamble") or ""),
+        )
+        if not preamble:
+            return False
+        if self._is_answer_question_like(preamble):
+            return False
+        normalized_preamble = normalize_rule_text(preamble)
+        if self._is_context_filler_candidate(normalized_preamble):
+            return False
+        if self._looks_like_incomplete_answer_span(preamble):
+            return False
+        return len(self._content_tokens(preamble)) >= 3
+
+    @staticmethod
     def _clean_context_sentence(text: str) -> str:
         """Return a shorter context sentence without leading filler."""
 
@@ -3524,7 +4899,17 @@ class QAPairExtractor:
             if not self._has_strong_question_signal(sentence):
                 continue
             leading_text = cleaned_text[:sentence_start].strip()
-            return leading_text or None
+            if leading_text:
+                return leading_text
+            cue_words = set(INTERROGATIVE_START_WORDS) | _AUXILIARY_QUESTION_START_WORDS
+            for token_index, match in enumerate(re.finditer(r"\b[\w']+\b", sentence)):
+                token = normalize_rule_text(match.group(0))
+                if token not in cue_words and token.split("'", maxsplit=1)[0] not in cue_words:
+                    continue
+                if token_index == 0:
+                    return None
+                inline_leading_text = sentence[: match.start()].strip(" ,;:-")
+                return inline_leading_text or None
         return None
 
     @staticmethod
@@ -3596,6 +4981,10 @@ class QAPairExtractor:
             flags.append("deferred_answer_too_broad")
         if "answer_responsiveness_weak" in reason_codes:
             flags.append("weak_answer_responsiveness")
+        if "answer_responsiveness_followup_prompt" in reason_codes:
+            flags.append("followup_prompt_answer")
+        if "monologue_continuation_risk" in reason_codes:
+            flags.append("monologue_continuation_risk")
         if "question_intent_poll_or_check" in reason_codes:
             flags.append("poll_or_check_question")
         if "question_intent_rhetorical_tag" in reason_codes:
@@ -3702,6 +5091,33 @@ class QAPairExtractor:
             return 0.40
         return 0.55
 
+    def _context_is_too_thin(
+        self,
+        *,
+        question: QuestionCandidate,
+        answer: _AnswerCandidate,
+        context_extraction: _ContextExtraction,
+    ) -> bool:
+        """Return whether context adds too little beyond Q/A text."""
+
+        context_text = context_extraction.context_text or ""
+        context_tokens = self._content_tokens(context_text)
+        if not context_tokens:
+            return False
+        if len(context_tokens) <= 2:
+            return True
+        question_tokens = self._content_tokens(question.question_text)
+        answer_tokens = self._content_tokens(answer.answer_text)
+        qa_tokens = question_tokens | answer_tokens
+        if context_tokens and context_tokens.issubset(qa_tokens) and len(context_tokens) <= 4:
+            return True
+        if (
+            context_extraction.context_confidence == "low"
+            and len(context_tokens - qa_tokens) <= 1
+        ):
+            return True
+        return False
+
     def _grounding_quality_feature_score(
         self,
         *,
@@ -3765,6 +5181,8 @@ class QAPairExtractor:
             "declarative_tag_question": 0.22,
             "weak_question_form": 0.22,
             "embedded_statement_question": 0.18,
+            "weak_implicit_quantity_question": 0.24,
+            "weak_expanded_contextual_question": 0.24,
             "low_autonomy_implicit_question": 0.24,
             "low_sentence_autonomy": 0.16,
             "low_boundary_confidence": 0.12,
@@ -3776,6 +5194,10 @@ class QAPairExtractor:
             "incomplete_answer_span": 0.14,
             "surface_answer_cue": 0.22,
             "weak_answer_responsiveness": 0.22,
+            "followup_prompt_answer": 0.26,
+            "thin_answer_reply": 0.18,
+            "unanchored_quantity_answer": 0.20,
+            "monologue_continuation_risk": 0.24,
             "deferred_answer_too_broad": 0.20,
             "quality_local_deferred": 0.14,
             "competing_question": 0.08,
@@ -3794,6 +5216,11 @@ class QAPairExtractor:
             "incomplete_answer_span_penalty": "incomplete_answer_span",
             "surface_answer_cue_penalty": "surface_answer_cue",
             "answer_responsiveness_weak": "weak_answer_responsiveness",
+            "answer_responsiveness_followup_prompt": "followup_prompt_answer",
+            "answer_responsiveness_thin_reply": "thin_answer_reply",
+            "answer_responsiveness_unanchored_quantity": (
+                "unanchored_quantity_answer"
+            ),
             "deferred_long_temporal_gap": "deferred_long_gap",
             "distant_segment_penalty": "distant_segment",
         }
@@ -3805,6 +5232,7 @@ class QAPairExtractor:
             "distant_segment": 0.10,
             "implicit_question_risk": 0.22,
             "weak_context_risk": 0.14,
+            "thin_context_risk": 0.16,
             "surface_answer_cue_risk": 0.22,
         }
 
@@ -3825,7 +5253,6 @@ class QAPairExtractor:
             risk_score += risk_weights["low_confidence"]
         elif confidence < 0.75 and "medium_confidence" in review_flags:
             risk_score += 0.04
-
         if (
             "question_mark" not in reason_codes
             and "question_intent_autonomous_head" not in reason_codes
@@ -3833,13 +5260,43 @@ class QAPairExtractor:
         ):
             reasons.append("implicit_question_risk")
             risk_score += extra_weights["implicit_question_risk"]
+        partial_scores = answer.partial_scores
+        question_debug = question.metadata
+        question_score = self._safe_float(question_debug.get("question_score"))
+        if question_score is None:
+            question_score = self._safe_float(question_debug.get("raw_question_score"))
+        if (
+            "question_mark" not in reason_codes
+            and "implicit_question_cue" in reason_codes
+            and "answer_responsiveness_quantity_missing" in reason_codes
+            and "question_intent_didactic_cue" not in reason_codes
+            and (question_score or 0.0) <= 0.53
+            and float(partial_scores.get("keyword_overlap") or 0.0) <= 0.05
+        ):
+            reasons.append("weak_implicit_quantity_question")
+            risk_score += risk_weights["weak_implicit_quantity_question"]
+        if (
+            bool(question_debug.get("question_context_expanded"))
+            and int(question_debug.get("token_count") or 0) <= 2
+            and "question_sentence_quality_penalty" in reason_codes
+            and "question_merge_safety_penalty" in reason_codes
+            and "competing_question_nearby" in reason_codes
+        ):
+            reasons.append("weak_expanded_contextual_question")
+            risk_score += risk_weights["weak_expanded_contextual_question"]
         if (
             not context_extraction.context_text
             or context_extraction.context_confidence == "low"
         ):
             reasons.append("weak_context_risk")
             risk_score += extra_weights["weak_context_risk"]
-        partial_scores = answer.partial_scores
+        if self._context_is_too_thin(
+            question=question,
+            answer=answer,
+            context_extraction=context_extraction,
+        ):
+            reasons.append("thin_context_risk")
+            risk_score += extra_weights["thin_context_risk"]
         answer_cue_score = float(partial_scores.get("answer_cues") or 0.0)
         relevance_score = float(partial_scores.get("relevance") or 0.0)
         if answer_cue_score > 0.0 and relevance_score <= 0.0:
@@ -4340,7 +5797,10 @@ class QAPairExtractor:
         trailing_spans = self._sentence_spans(text.strip())
         if not trailing_spans:
             return False
-        return self._is_contextual_question(trailing_spans[0][0].strip())
+        first_span = trailing_spans[0][0].strip()
+        if "?" not in first_span and not self._has_strong_question_signal(first_span):
+            return False
+        return self._is_contextual_question(first_span)
 
     def _is_contextual_question(self, text: str) -> bool:
         """Return whether the question is too short or anaphoric to stand alone."""
@@ -4366,7 +5826,145 @@ class QAPairExtractor:
             return True
         if "?" in cleaned_text:
             return True
+        if _CAUSAL_ANSWER_AFTER_WHY_RE.match(normalized_text):
+            return False
         return self._starts_with_interrogative_word(normalized_text)
+
+    def _is_question_continuation_answer(self, normalized_text: str) -> bool:
+        """Return whether an answer is likely still clarifying the question."""
+
+        stripped = normalized_text.rstrip(" ?.!;:").strip()
+        if not stripped:
+            return False
+        starts_with_clarifier = stripped.startswith(
+            (
+                "cioe ",
+                "cioè ",
+                "that is ",
+                "i mean ",
+                "meaning ",
+                "in other words ",
+            ),
+        )
+        if not starts_with_clarifier:
+            return False
+        cue_index = self._first_question_cue_token_index(stripped)
+        if cue_index is not None and cue_index >= 2:
+            return True
+        return bool(re.search(r"\b(?:if|se)\s+(?:one|you|uno|qualcuno)\b", stripped))
+
+    def _is_interview_bridge_unit(
+        self,
+        text: str,
+        *,
+        question_text: str,
+    ) -> bool:
+        """Return whether a unit is a local bridge before an interview answer."""
+
+        return self._interview_bridge_kind(
+            text,
+            question_text=question_text,
+        ) is not None
+
+    def _interview_bridge_kind(
+        self,
+        text: str,
+        *,
+        question_text: str,
+    ) -> str | None:
+        """Return the bridge kind for a local interview cluster unit."""
+
+        cleaned_text = text.strip()
+        if not cleaned_text:
+            return "empty"
+        normalized_text = normalize_rule_text(cleaned_text)
+        if self._is_followup_prompt_text(normalized_text):
+            return "prompt"
+        if self._is_question_echo_bridge(
+            bridge_text=cleaned_text,
+            question_text=question_text,
+        ):
+            return "echo"
+        if self._is_answer_question_like(cleaned_text):
+            return "question"
+        return None
+
+    def _is_question_echo_bridge(
+        self,
+        *,
+        bridge_text: str,
+        question_text: str,
+    ) -> bool:
+        """Return whether bridge text mostly repeats the question as an echo."""
+
+        bridge_tokens = self._content_tokens(bridge_text)
+        question_tokens = self._content_tokens(question_text)
+        if not bridge_tokens or not question_tokens:
+            return False
+        overlap = len(bridge_tokens & question_tokens) / max(1, len(bridge_tokens))
+        return overlap >= 0.55 and len(bridge_tokens) <= 8
+
+    def _is_interview_echo_question_candidate(
+        self,
+        *,
+        unit_index: int,
+        units: Sequence[_ExtractionUnit],
+        question_text: str,
+    ) -> bool:
+        """Return whether a question is likely an interviewee echo."""
+
+        if unit_index <= 0:
+            return False
+        question_tokens = self._content_tokens(question_text)
+        if not question_tokens or len(question_tokens) > 8:
+            return False
+        saw_prompt = False
+        saw_related_question = False
+        for candidate_index in range(max(0, unit_index - 4), unit_index):
+            candidate_text = units[candidate_index].text
+            normalized_text = normalize_rule_text(candidate_text)
+            if self._is_followup_prompt_text(normalized_text):
+                saw_prompt = True
+                continue
+            if "?" not in candidate_text:
+                continue
+            previous_tokens = self._content_tokens(candidate_text)
+            if not previous_tokens:
+                continue
+            overlap = len(question_tokens & previous_tokens) / max(
+                1,
+                min(len(question_tokens), len(previous_tokens)),
+            )
+            if overlap >= 0.45:
+                saw_related_question = True
+        return saw_prompt and saw_related_question
+
+    def _is_plausible_interview_cluster_answer(
+        self,
+        *,
+        question: QuestionCandidate,
+        answer_text: str,
+        skipped_units: Sequence[_ExtractionUnit],
+    ) -> bool:
+        """Return whether a post-cluster answer is substantial enough."""
+
+        normalized_answer = normalize_rule_text(answer_text)
+        if self._is_answer_question_like(answer_text):
+            return False
+        if self._is_followup_prompt_text(normalized_answer):
+            return False
+        if self._is_filler_or_boilerplate_answer(normalized_answer):
+            return False
+        token_count = count_tokens(normalized_answer)
+        if token_count < 5:
+            return False
+        answer_tokens = self._content_tokens(normalized_answer)
+        question_tokens = self._content_tokens(question.question_text)
+        if len(answer_tokens - question_tokens) < 3:
+            return False
+        if len(skipped_units) > 4:
+            return False
+        return True
 
     def _classify_question_intent(
         self,
@@ -4448,22 +6046,53 @@ class QAPairExtractor:
     def _has_autonomous_question_head(self, normalized_text: str) -> bool:
         """Return whether a candidate starts like an autonomous question."""
 
+        normalized_text = self._strip_leading_question_discourse_markers(
+            normalized_text,
+        )
         if self._starts_with_interrogative_word(normalized_text):
+            return True
+        if self._is_terminal_object_question(normalized_text):
             return True
         first_word = normalized_text.split(maxsplit=1)[0] if normalized_text else ""
         first_word = first_word.split("'", maxsplit=1)[0]
         return first_word in _AUXILIARY_QUESTION_START_WORDS
 
     @staticmethod
+    def _is_terminal_object_question(normalized_text: str) -> bool:
+        """Return whether a short question asks for the object at the end."""
+
+        stripped = normalized_text.rstrip(" ?.!").strip()
+        tokens = re.findall(r"\b[\w']+\b", stripped)
+        return 2 <= len(tokens) <= 5 and tokens[-1] in {"che", "cosa", "what"}
+
+    @staticmethod
     def _first_question_cue_token_index(normalized_text: str) -> int | None:
         """Return first token offset of a broad interrogative cue."""
 
+        normalized_text = QAPairExtractor._strip_leading_question_discourse_markers(
+            normalized_text,
+        )
         tokens = re.findall(r"\b[\w']+\b", normalized_text)
         cue_words = set(INTERROGATIVE_START_WORDS) | _AUXILIARY_QUESTION_START_WORDS
         for index, token in enumerate(tokens):
             if token in cue_words or token.split("'", maxsplit=1)[0] in cue_words:
                 return index
         return None
+
+    @staticmethod
+    def _strip_leading_question_discourse_markers(normalized_text: str) -> str:
+        """Drop short discourse markers before evaluating question autonomy."""
+
+        stripped = normalized_text.strip()
+        for _ in range(2):
+            parts = stripped.split(maxsplit=1)
+            if not parts:
+                return ""
+            marker = parts[0].strip(" ,;:")
+            if marker not in _LEADING_QUESTION_DISCOURSE_MARKERS:
+                break
+            stripped = parts[1] if len(parts) > 1 else ""
+        return stripped
 
     @staticmethod
     def _is_subordinate_question_fragment(
@@ -4492,6 +6121,25 @@ class QAPairExtractor:
         ):
             return False
         return True
+
+    def _is_causal_answer_after_previous_question(
+        self,
+        *,
+        unit_index: int,
+        units: Sequence[_ExtractionUnit],
+        normalized_question: str,
+    ) -> bool:
+        """Return whether an implicit why-cue sentence is likely an answer."""
+
+        if unit_index <= 0:
+            return False
+        if not _CAUSAL_ANSWER_AFTER_WHY_RE.match(normalized_question):
+            return False
+        previous_unit = units[unit_index - 1]
+        if "?" not in previous_unit.text:
+            return False
+        gap_seconds = max(0.0, units[unit_index].start_seconds - previous_unit.end_seconds)
+        return gap_seconds <= 12.0
 
     @staticmethod
     def _is_rhetorical_checkin_question(normalized_text: str) -> bool:
@@ -4548,7 +6196,7 @@ class QAPairExtractor:
     ) -> bool:
         """Return whether a question is mostly a statement plus a tag."""
 
-        if not has_question_mark or question_matches or didactic_matches:
+        if not has_question_mark or didactic_matches:
             return False
         stripped = normalized_text.rstrip(" ?.!").strip()
         if not stripped:
@@ -4558,7 +6206,21 @@ class QAPairExtractor:
             return False
         if not _TAG_QUESTION_RE.fullmatch(parts[-1]):
             return False
+        causal_declarative = QAPairExtractor._is_causal_declarative_statement(stripped)
+        if question_matches and not causal_declarative:
+            return False
+        if causal_declarative:
+            return True
         return not QAPairExtractor._starts_with_interrogative_word(stripped)
+
+    @staticmethod
+    def _is_causal_declarative_statement(normalized_text: str) -> bool:
+        """Return whether a causal cue introduces a statement, not a question."""
+
+        stripped = normalized_text.rstrip(" ?.!").strip()
+        if _CAUSAL_DECLARATIVE_STATEMENT_RE.match(stripped):
+            return True
+        return bool(_CAUSAL_EXISTENTIAL_TAG_RE.match(stripped))
 
     @staticmethod
     def _is_fragment_question(
@@ -4576,6 +6238,8 @@ class QAPairExtractor:
             return False
         stripped = normalized_text.rstrip(" ?.!").strip()
         if QAPairExtractor._starts_with_interrogative_word(stripped):
+            return False
+        if QAPairExtractor._is_terminal_object_question(stripped):
             return False
         if any(pattern.fullmatch(stripped) for pattern in _ANAPHORIC_QUESTION_PATTERNS):
             return False
@@ -4620,6 +6284,29 @@ class QAPairExtractor:
             return cleaned_text, None
         return rest, "answer_meta_opening_trimmed"
 
+    def _trim_answer_text(self, text: str) -> tuple[str, list[str]]:
+        """Return answer text with compact discourse wrappers removed."""
+
+        cleaned_text, meta_reason = self._trim_answer_meta_opening(text)
+        reasons = [meta_reason] if meta_reason else []
+        cleaned_text, tag_reason = self._trim_answer_trailing_tag(cleaned_text)
+        if tag_reason:
+            reasons.append(tag_reason)
+        return cleaned_text, reasons
+
+    @staticmethod
+    def _trim_answer_trailing_tag(text: str) -> tuple[str, str | None]:
+        """Remove a final confirmation tag when the answer body is substantive."""
+
+        cleaned_text = text.strip()
+        match = _TRAILING_ANSWER_TAG_RE.match(cleaned_text)
+        if not match:
+            return cleaned_text, None
+        body = re.sub(r"\s+", " ", match.group("body")).strip(" ,;:.")
+        if count_tokens(normalize_rule_text(body)) < 2:
+            return cleaned_text, None
+        return body, "answer_trailing_tag_trimmed"
+
     @staticmethod
     def _looks_like_incomplete_answer_span(text: str) -> bool:
         """Return whether an answer span appears to stop before resolving."""
@@ -4634,6 +6321,8 @@ class QAPairExtractor:
         if not tokens:
             return False
         if tokens[-1] in _INCOMPLETE_ANSWER_END_WORDS:
+            return True
+        if cleaned_text.endswith(","):
             return True
         if (
             _INCOMPLETE_ANSWER_START_RE.search(normalized_text)
@@ -4670,6 +6359,26 @@ class QAPairExtractor:
         if not stripped:
             return False
         return bool(_PROCEDURAL_QUESTION_RE.search(stripped))
+
+    @staticmethod
+    def _is_followup_prompt_text(normalized_text: str) -> bool:
+        """Return whether text is a prompt asking someone else to answer."""
+
+        stripped = normalized_text.rstrip(" ?.!;:").strip()
+        if not stripped:
+            return False
+        return bool(_FOLLOWUP_PROMPT_ANSWER_RE.search(stripped))
+
+    @staticmethod
+    def _is_followup_prompt_answer(normalized_text: str) -> bool:
+        """Return whether an answer looks like a prompt for someone else to answer."""
+
+        stripped = normalized_text.rstrip(" ?.!;:").strip()
+        if not stripped:
+            return False
+        if not QAPairExtractor._is_followup_prompt_text(stripped):
+            return False
+        return bool(QAPairExtractor._first_question_cue_token_index(stripped))
 
     def _question_answer_alignment(
         self,
@@ -4774,6 +6483,17 @@ class QAPairExtractor:
         }
 
     @staticmethod
+    def _content_token_list(text: str) -> list[str]:
+        """Return content-bearing tokens in source order."""
+
+        normalized_text = normalize_rule_text(text)
+        return [
+            token
+            for token in re.findall(r"\b[\w']+\b", normalized_text)
+            if len(token) > 1 and token not in _QUESTION_STOPWORDS
+        ]
+
+    @staticmethod
     def _number_tokens(text: str) -> set[str]:
         """Return all numeric tokens mentioned in the text."""
 
@@ -4815,6 +6535,23 @@ class QAPairExtractor:
         if cleaned_text.count("?") > 1:
             return False
         return True
+
+    def _is_plausible_answer_for_question(
+        self,
+        question: QuestionCandidate,
+        answer_text: str,
+    ) -> bool:
+        """Return whether answer text is plausible for a specific question."""
+
+        if self._is_plausible_answer_text(answer_text):
+            return True
+        cleaned_text = answer_text.strip()
+        if not cleaned_text or cleaned_text.count("?") > 0:
+            return False
+        return self._is_socratic_short_answer_for_question(
+            question=question,
+            answer_text=cleaned_text,
+        )
 
     @staticmethod
     def _build_segment_lookup(

@@ -158,11 +158,21 @@ QA quality diagnostics are intentionally split across two levels:
 
 - candidate-level `session.json` metadata contains compact
   `quality_features` for each QA/C candidate
+- candidate-level `context_debug` contains the extractive context selected for
+  review plus compact diagnostics such as `context_selection_score`,
+  `context_reasons`, and `candidate_context_count`
 - run-level `metrics.json` contains only aggregated `qa_quality_metrics`
 
 `metrics.json` must not duplicate full candidates, question/answer text, or
 debug blocks. Use `session.json` as the granular source of truth when a single
 candidate needs inspection.
+
+Context quality is intentionally secondary to Q/A quality. Context extraction
+may improve the readable `context_text` used for review, but the local QA gate
+must not promote or reject candidates only because the reviewer-facing context
+changed. When context experiments need better readability, gate-sensitive
+quality features stay conservative and stable while `context_debug` carries the
+new context-selection diagnostics.
 
 `qa_quality_metrics.run_quality_signal` is a compact diagnostic run-level
 indicator derived from aggregate quality distribution, useful yield, and risk.

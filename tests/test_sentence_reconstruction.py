@@ -63,6 +63,32 @@ class SentenceReconstructionTests(unittest.TestCase):
         self.assertEqual(len(caught), 1)
         self.assertEqual(str(caught[0].message), "different splitter warning")
 
+    def test_wtpsplit_backend_fails_when_splitter_is_unavailable(self) -> None:
+        """The wtpsplit backend should not silently use rule fallback."""
+
+        config = PipelineConfig(sentence_splitter_backend="wtpsplit")
+        reconstructor = SentenceReconstructor(config)
+        reconstructor._splitter_resolution_attempted = True
+        reconstructor._resolved_splitter = None
+
+        with self.assertRaisesRegex(RuntimeError, "wtpsplit sentence splitter"):
+            reconstructor._split_text(text="Alpha continues. Beta follows.", language_code="en")
+
+    def test_fallback_rules_backend_remains_explicitly_available(self) -> None:
+        """Rule fallback remains available only when selected explicitly."""
+
+        config = PipelineConfig(sentence_splitter_backend="fallback_rules")
+        reconstructor = SentenceReconstructor(config)
+
+        sentences, metadata = reconstructor._split_text(
+            text="Alpha continues. Beta follows.",
+            language_code="en",
+        )
+
+        self.assertEqual(sentences, ["Alpha continues.", "Beta follows."])
+        self.assertEqual(metadata["splitter_backend"], "fallback_rules")
+        self.assertEqual(metadata["fallback_reason"], "fallback_backend_forced")
+
     def test_build_source_reconstructs_sentences_from_utterances(self) -> None:
         """Speaker-consistent utterances should become traceable sentences."""
 
