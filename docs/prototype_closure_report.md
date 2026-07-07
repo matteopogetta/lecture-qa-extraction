@@ -34,4 +34,4 @@ Micro-cicli a scope chiuso con criteri di accettazione binari; review esterna in
 
 ## Come riprendere lo sviluppo
 
-Leggere `PROJECT_DIARY.md` (storia completa per ciclo) e `docs/decision_plan_2026-07-03.md` (prompt pronti: R5b diarizzazione misurata; linee future annotate). Il benchmark congelato e le review candidate-per-candidato in `evaluations/` sono la ground truth per misurare qualsiasi modifica: rieseguire il batch warm da terminale costa minuti, la trascrizione è in cache.
+Leggere `docs/decision_plan_2026-07-03.md` (storico delle decisioni e prompt pronti: R5b diarizzazione misurata; linee future annotate). Il benchmark congelato e le review candidate-per-candidato in `evaluations/` sono la ground truth per misurare qualsiasi modifica: rieseguire il batch warm da terminale costa minuti, la trascrizione è in cache.

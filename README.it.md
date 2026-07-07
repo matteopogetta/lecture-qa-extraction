@@ -136,8 +136,9 @@ Il prototipo di estrazione e' completo e congelato. Benchmark finale su 7 input
 (review esterna AI, keep/revise/reject per candidato): 46 candidati emessi,
 keep 52%, revise 30%, reject 17%; la lezione universitaria di riferimento e' a
 keep 86% senza reject; l'input puramente monologico produce correttamente zero
-candidati. Storia di sviluppo e decisioni per ciclo in `PROJECT_DIARY.md`;
-report di chiusura in `docs/prototype_closure_report.md`.
+candidati. Storia di sviluppo e decisioni per ciclo in
+`docs/decision_plan_2026-07-03.md`; report di chiusura in
+`docs/prototype_closure_report.md`.
 
 Speaker check e rescue: il profilo `quality_local` confronta le impronte vocali
 degli span domanda/risposta (ECAPA locale, SpeechBrain). Setup una-tantum:

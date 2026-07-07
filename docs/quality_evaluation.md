@@ -288,7 +288,7 @@ in a real first run.
 ## Final Prototype Snapshot (2026-07-05)
 
 Development is frozen. The evaluation loop described above was executed across
-cycles R1-R10.1 (see `PROJECT_DIARY.md`) with external AI review of every run.
+cycles R1-R10.1 with external AI review of every run.
 
 Final benchmark, 7 inputs, `quality_local` + `structural`, speaker check and
 rescue ON:

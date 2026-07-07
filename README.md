@@ -254,7 +254,7 @@ The extraction prototype is feature-complete and frozen. Final benchmark over
 candidates, 52% keep, 30% revise, 17% reject; reference university lecture at
 86% keep with zero rejects; pure monologue input correctly yields zero
 candidates. Development history and per-cycle decisions are recorded in
-`PROJECT_DIARY.md`; the final quality snapshot lives in
+`docs/decision_plan_2026-07-03.md`; the final quality snapshot lives in
 `evaluations/benchmark_overview_2026-07-03.md` (local, not committed).
 
 Known limits (documented, out of prototype scope): multi-speaker panels need

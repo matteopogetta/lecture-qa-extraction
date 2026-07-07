@@ -52,3 +52,6 @@ sample_inputs/
 !sample_data/
 !sample_data/README.md
 !sample_data/example.mp4
+
+# Internal development diary (kept local, not published)
+PROJECT_DIARY.md
