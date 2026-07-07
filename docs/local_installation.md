@@ -166,3 +166,34 @@ lecture-analyzer /full/path/to/lecture.mp4 \
 
 This avoids the optional WhisperX branch and is usually the fastest recovery
 path for local setups.
+
+## Speaker check model (recommended)
+
+The `quality_local` profile includes a speaker-change check and a
+speaker-assisted rescue for interview content. Both need a local ECAPA
+speaker-embedding model (one-time download, ~80 MB, then fully offline):
+
+```bash
+pip install speechbrain
+python -c "from speechbrain.inference.speaker import EncoderClassifier; EncoderClassifier.from_hparams(source='speechbrain/spkrec-ecapa-voxceleb', savedir='local_models/spkrec-ecapa-voxceleb')"
+```
+
+When `local_models/spkrec-ecapa-voxceleb` exists, the check activates
+automatically; `--enable-qa-speaker-check` forces it, and
+`--qa-speaker-model-path` points to a custom location. Without the model the
+pipeline degrades gracefully: no penalties, no rescues, and a
+`model_not_configured_or_missing` note in the run metrics.
+
+## Optional semantic responsiveness model (OFF by default)
+
+An opt-in scorer based on `sentence-transformers` exists for diagnostics:
+
+```bash
+pip install sentence-transformers
+# download once into local_models/, then pass:
+#   --enable-qa-semantic-responsiveness \
+#   --qa-semantic-responsiveness-model local_models/<model-dir>
+```
+
+It is intentionally disabled by default: model load dominates run time and on
+benchmark content it penalized short-but-correct answers.

@@ -17,6 +17,7 @@ Run:
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import json
 import mimetypes
 import os
@@ -390,48 +391,101 @@ def _run_time_from_path(path: Path):
 
 
 def discover_sessions() -> list[dict]:
-    """Find session.json files and return lightweight descriptors."""
-    found: dict[str, dict] = {}
+    """Find session JSONs and return lightweight descriptors.
+
+    Candidate paths are collected first, then parsed (parallel, mtime-cached and
+    disk-persisted) so repeat calls and restarts stay fast even with hundreds of
+    runs and multi-MB session files."""
+    candidates: list[tuple[Path, str | None]] = []
+    seen: set[str] = set()
+
+    def add(path: Path, origin: str | None) -> None:
+        rp = str(path.resolve())
+        if rp in seen:
+            return
+        seen.add(rp)
+        candidates.append((path, origin))
+
     for root in SESSION_SEARCH_ROOTS:
-        if not root.is_dir():
-            continue
-        for path in root.rglob("session.json"):
-            rp = str(path.resolve())
-            if rp in found:
-                continue
-            meta = _peek_session(path)
-            if meta is not None:
-                found[rp] = meta
+        if root.is_dir():
+            for path in root.rglob("session.json"):
+                add(path, None)
     ui_root = PROJECT_ROOT / "artifacts" / "ui_sessions"
     if ui_root.is_dir():
         for path in ui_root.rglob("*.json"):
-            if _looks_like_sidecar(path):
-                continue
-            rp = str(path.resolve())
-            if rp in found:
-                continue
-            meta = _peek_session(path)
-            if meta is not None:
-                meta["origin"] = "ui"
-                found[rp] = meta
+            if not _looks_like_sidecar(path):
+                add(path, "ui")
     if SAMPLE_OUTPUT_DIR.is_dir():
         for path in SAMPLE_OUTPUT_DIR.rglob("*.json"):
-            if _looks_like_sidecar(path):
-                continue
-            rp = str(path.resolve())
-            if rp in found:
-                continue
-            meta = _peek_session(path)
+            if not _looks_like_sidecar(path):
+                add(path, "sample")
+
+    def worker(item):
+        path, origin = item
+        meta = _peek_session(path)
+        if meta is not None and origin is not None:
+            meta = dict(meta)
+            meta["origin"] = origin
+        return meta
+
+    sessions: list[dict] = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+        for meta in pool.map(worker, candidates):
             if meta is not None:
-                meta["origin"] = "sample"
-                found[rp] = meta
-    sessions = list(found.values())
+                sessions.append(meta)
+    _save_disk_cache()
     sessions.sort(key=lambda s: (s.get("run_time") or 0), reverse=True)
     return sessions
 
 
+_PEEK_CACHE: dict[str, tuple[float, dict | None]] = {}
+_CACHE_FILE = PROJECT_ROOT / "artifacts" / ".ui_session_cache.json"
+_CACHE_DIRTY = False
+
+
+def _load_disk_cache() -> None:
+    try:
+        raw = json.loads(_CACHE_FILE.read_text(encoding="utf-8"))
+        for k, v in raw.items():
+            _PEEK_CACHE[k] = (v[0], v[1])
+    except Exception:
+        pass
+
+
+def _save_disk_cache() -> None:
+    global _CACHE_DIRTY
+    if not _CACHE_DIRTY:
+        return
+    try:
+        _CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        payload = {k: [mt, meta] for k, (mt, meta) in _PEEK_CACHE.items()}
+        _CACHE_FILE.write_text(json.dumps(payload), encoding="utf-8")
+        _CACHE_DIRTY = False
+    except Exception:
+        pass
+
+
 def _peek_session(path: Path) -> dict | None:
-    """Read minimal fields from a session.json to build a picker entry."""
+    """Read minimal fields from a session.json to build a picker entry.
+
+    Results are memoized by (path, mtime) so repeated discovery calls do not
+    re-parse unchanged files (some session JSONs are several MB)."""
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        return None
+    key = str(path.resolve())
+    cached = _PEEK_CACHE.get(key)
+    if cached is not None and cached[0] == mtime:
+        return cached[1]
+    result = _peek_session_uncached(path)
+    global _CACHE_DIRTY
+    _PEEK_CACHE[key] = (mtime, result)
+    _CACHE_DIRTY = True
+    return result
+
+
+def _peek_session_uncached(path: Path) -> dict | None:
     data = _safe_load_json(path)
     if not isinstance(data, dict):
         return None
@@ -667,6 +721,134 @@ def parse_multipart_to_disk(rfile, boundary: bytes, content_length: int, dest_di
     return fields, files
 
 
+# ---------------------------------------------------------------------------
+# Timing / cold-reference: real (cold|warm) vs expected-cold per stage, using
+# previous evaluation runs of the same lesson (prefer the oldest fully-cold run).
+# ---------------------------------------------------------------------------
+_TIMING_CACHE: dict[str, tuple[float, dict | None]] = {}
+
+
+def _lesson_key(data: dict) -> str | None:
+    for src in data.get("audio_sources", []) or []:
+        na = src.get("normalized_asset", {}) or {}
+        fn = na.get("source_filename")
+        if fn:
+            return Path(fn).stem.lower()
+    for src in data.get("input_sources", []) or []:
+        fn = src.get("original_filename")
+        if fn:
+            return Path(fn).stem.lower()
+    meta = data.get("session_metadata", {}) or {}
+    sid = meta.get("session_id")
+    if sid:
+        return re.sub(r"_\d+files$", "", str(sid)).lower()
+    return None
+
+
+def _timing_peek(path: Path) -> dict | None:
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        return None
+    key = str(path.resolve())
+    cached = _TIMING_CACHE.get(key)
+    if cached is not None and cached[0] == mtime:
+        return cached[1]
+    data = _safe_load_json(path)
+    result = None
+    if isinstance(data, dict):
+        pt = data.get("pipeline_timing", {}) or {}
+        stages = []
+        for st in pt.get("stages", []) or []:
+            stages.append({
+                "name": st.get("stage_name"),
+                "dur": st.get("duration_seconds"),
+                "status": st.get("status"),
+                "cache": bool(st.get("used_cache")),
+                "artifact": bool(st.get("used_existing_artifact")),
+                "forced": bool(st.get("forced_recompute")),
+            })
+        meta = data.get("session_metadata", {}) or {}
+        inner = meta.get("metadata", {}) or {}
+        result = {
+            "stages": stages,
+            "any_cache_hit": bool(inner.get("pipeline_any_cache_hit")),
+            "any_artifact_reuse": bool(inner.get("pipeline_any_artifact_reuse")),
+            "run_label": inner.get("pipeline_run_profile_label"),
+            "lesson": _lesson_key(data),
+        }
+    _TIMING_CACHE[key] = (mtime, result)
+    return result
+
+
+def _run_label_for(path: Path) -> str:
+    # evaluations/<label>/runs/<run_id>/session.json -> run_id
+    parts = path.resolve().parts
+    if "runs" in parts:
+        i = parts.index("runs")
+        if i + 1 < len(parts):
+            return parts[i + 1]
+    return path.parent.name
+
+
+def build_cold_reference(session_path: Path) -> dict:
+    base = _timing_peek(session_path)
+    if base is None:
+        return {"available": False}
+    lesson = base["lesson"]
+    result = {
+        "available": False,
+        "lesson": lesson,
+        "this_run_warm": base["any_cache_hit"] or base["any_artifact_reuse"],
+        "this_run_label": base["run_label"],
+        "reference_run": None,
+        "reference_is_full_cold": False,
+        "runs_considered": 0,
+        "cold": {},
+    }
+    if not lesson:
+        return result
+    entries = []
+    for sdesc in discover_sessions():
+        sn = sdesc.get("source_name")
+        stem = Path(sn).stem.lower() if sn else (sdesc.get("session_id") or "").lower()
+        if stem != lesson:
+            continue
+        pth = Path(sdesc["path"])
+        tp = _timing_peek(pth)
+        if tp and tp["stages"]:
+            entries.append((sdesc.get("run_time") or 0, pth, tp))
+    entries.sort(key=lambda x: x[0])  # oldest first
+    result["runs_considered"] = len(entries)
+    cold: dict[str, dict] = {}
+    # 1) oldest fully-cold run as the complete reference
+    for rt, pth, tp in entries:
+        if not tp["any_cache_hit"] and not tp["any_artifact_reuse"]:
+            for st in tp["stages"]:
+                if st["dur"] is not None and st["name"]:
+                    cold[st["name"]] = {"sec": st["dur"], "src": "reference"}
+            result["reference_run"] = _run_label_for(pth)
+            result["reference_is_full_cold"] = True
+            break
+    # 2) fill any missing stage with the max real-executed duration across history
+    for rt, pth, tp in entries:
+        for st in tp["stages"]:
+            nm = st["name"]
+            if not nm or st["dur"] is None:
+                continue
+            executed = not st["cache"] and not st["artifact"]
+            if not executed:
+                continue
+            cur = cold.get(nm)
+            if cur is None:
+                cold[nm] = {"sec": st["dur"], "src": "max_executed"}
+            elif cur["src"] != "reference" and st["dur"] > cur["sec"]:
+                cold[nm] = {"sec": st["dur"], "src": "max_executed"}
+    result["cold"] = cold
+    result["available"] = bool(cold)
+    return result
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "LectureQAViewer/1.0"
 
@@ -719,6 +901,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._api_audio(qs)
         if route == "/api/analyze/status":
             return self._api_analyze_status(qs)
+        if route == "/api/cold_reference":
+            return self._api_cold_reference(qs)
         return self._send_error_json(HTTPStatus.NOT_FOUND, "not found")
 
     def do_POST(self):
@@ -756,6 +940,17 @@ class Handler(BaseHTTPRequestHandler):
                 "session_path": str(path.resolve()),
             }
         )
+
+    def _api_cold_reference(self, qs):
+        raw = (qs.get("path") or [""])[0]
+        path = self._validated_session_path(raw)
+        if path is None:
+            return self._send_error_json(HTTPStatus.BAD_REQUEST, "invalid session path")
+        try:
+            ref = build_cold_reference(path)
+        except Exception as exc:  # noqa: BLE001
+            return self._send_json({"available": False, "error": str(exc)})
+        return self._send_json(ref)
 
     def _api_audio(self, qs):
         raw = (qs.get("path") or [""])[0]
@@ -920,6 +1115,7 @@ def main(argv=None):
         print("ERROR: static/index.html not found next to serve.py", file=sys.stderr)
         return 2
 
+    _load_disk_cache()
     httpd = ThreadingHTTPServer((args.host, args.port), Handler)
     url = f"http://{args.host}:{args.port}/"
     print("=" * 60)

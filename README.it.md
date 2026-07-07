@@ -93,12 +93,14 @@ intermedi persistiti:
 11. Unire i chunk di transcript in un transcript di sessione
 12. Normalizzare il testo in modo conservativo
 13. Segmentare il contenuto
-14. Estrarre candidate Q/A
-15. Esportare JSON e, opzionalmente, un file Excel di debug
+14. Estrarre candidate Q/A (guardrail locali, dedupe eco, filtro deflessioni)
+15. Verificare lo speaker su domanda/risposta (ECAPA locale) con penalita'
+    graduata e rescue speaker-assistito degli scambi intervista genuini
+16. Esportare JSON e, opzionalmente, un file Excel di debug
 
 Stato attuale:
 
-- gli step da 1 a 15 sono collegati nella pipeline eseguibile
+- gli step da 1 a 16 sono collegati nella pipeline eseguibile
 - la pipeline ufficiale del progetto vive ora sotto `src/lecture_analyzer/`
   nei sottopackage `core/`, `input/`, `preprocessing/`, `transcription/`,
   `analysis/`, `output/`
@@ -127,6 +129,27 @@ Namespace pubblici attualmente disponibili:
 
 Gli import root legacy sono stati rimossi. Gli import di progetto devono usare
 solo `lecture_analyzer.*`.
+
+## Stato Del Prototipo (2026-07-05)
+
+Il prototipo di estrazione e' completo e congelato. Benchmark finale su 7 input
+(review esterna AI, keep/revise/reject per candidato): 46 candidati emessi,
+keep 52%, revise 30%, reject 17%; la lezione universitaria di riferimento e' a
+keep 86% senza reject; l'input puramente monologico produce correttamente zero
+candidati. Storia di sviluppo e decisioni per ciclo in `PROJECT_DIARY.md`;
+report di chiusura in `docs/prototype_closure_report.md`.
+
+Speaker check e rescue: il profilo `quality_local` confronta le impronte vocali
+degli span domanda/risposta (ECAPA locale, SpeechBrain). Setup una-tantum:
+
+```bash
+pip install speechbrain
+python -c "from speechbrain.inference.speaker import EncoderClassifier; EncoderClassifier.from_hparams(source='speechbrain/spkrec-ecapa-voxceleb', savedir='local_models/spkrec-ecapa-voxceleb')"
+```
+
+Con il modello presente il check e' attivo di default (costo ~2s di load per
+processo); senza modello il fallback e' trasparente. Lo scorer semantico di
+responsivita' resta opzionale e OFF di default.
 
 ## Requisiti Di Runtime
 
@@ -758,6 +781,12 @@ PYTHONPATH=. pytest -q
   opzionali
 - alcune regolazioni avanzate esistono in `PipelineConfig` ma non sono ancora
   esposte via CLI
+- panel multi-voce: senza diarizzazione completa i candidati restano
+  continuazioni same-speaker (correttamente penalizzate/rifiutate)
+- recall interviste reale ma basso in assoluto (rescue attivo, coverage
+  misurata nel Coverage Summary di ogni run)
+- residui semantici: risposte adiacenti ma non responsive e risposte deittiche
+  dipendenti dalla lavagna restano in classe revise
 
 ## Riferimenti Rapidi Nel Repository
 

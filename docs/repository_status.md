@@ -1,5 +1,11 @@
 # Repository Status
 
+> **Prototype frozen (2026-07-05).** Extraction development is closed at cycle
+> R10.1. Final quality snapshot: `docs/quality_evaluation.md` (Final Prototype
+> Snapshot) and `docs/prototype_closure_report.md`. Development history:
+> `PROJECT_DIARY.md`. Ready-to-use prompts for future cycles:
+> `docs/decision_plan_2026-07-03.md`.
+
 ## Current source of truth
 
 The official lecture-processing pipeline is now source-owned under

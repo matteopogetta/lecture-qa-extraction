@@ -9,6 +9,7 @@ from time import monotonic
 from typing import Any, Sequence
 
 from lecture_analyzer.analysis.qa_extractor import QAPairExtractor
+from lecture_analyzer.analysis.qa_speaker_check import apply_qa_speaker_check
 from lecture_analyzer.analysis.sentence_reconstruction import SentenceReconstructor
 from lecture_analyzer.analysis.segmenter import TranscriptSegmenter
 from lecture_analyzer.analysis.speaker_attribution import SpeakerAttributor
@@ -395,9 +396,30 @@ class LectureProcessingPipeline:
             stage.status = self._resolve_qa_stage_status(session)
             stage.note = self._resolve_qa_stage_note(session)
             stage.metadata["qa_candidate_count"] = len(session.qa_candidates)
+            stage.metadata["semantic_responsiveness"] = session.metadata.get(
+                "qa_semantic_responsiveness",
+            )
             self._finalize_stage_report(stage)
         session.metadata["qa_extraction_enabled"] = self.config.enable_qa_extraction
         session.metadata["qa_candidate_count"] = len(session.qa_candidates)
+        self._sync_timing_summary(session)
+        self._log_stage_completion(stage)
+
+        with timer.measure(
+            "qa_speaker_check",
+            metadata={"enabled": self.config.qa_speaker_check_enabled},
+        ) as stage:
+            metrics = apply_qa_speaker_check(
+                session,
+                self.config.speaker_check_config(),
+            )
+            stage.status = (
+                "executed" if self.config.qa_speaker_check_enabled else "disabled"
+            )
+            if metrics.notes:
+                stage.note = "; ".join(metrics.notes)
+            stage.metadata.update(metrics.to_dict())
+            self._finalize_stage_report(stage)
         self._sync_timing_summary(session)
         self._log_stage_completion(stage)
         return session

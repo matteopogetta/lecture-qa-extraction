@@ -1,0 +1,518 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "LectureSession export (draft, generated from a real session)",
+  "description": "Bozza non vincolante generata dalla struttura reale di una sessione esportata. Tipi di primo livello e campi principali; da promuovere a contratto formale insieme a una politica di versionamento.",
+  "type": "object",
+  "properties": {
+    "session_metadata": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "language_codes": {
+          "type": "array"
+        },
+        "supports_mixed_language": {
+          "type": "boolean"
+        },
+        "processing_status": {
+          "type": "string"
+        },
+        "metadata": {
+          "type": "object"
+        }
+      }
+    },
+    "input_sources": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "source_id": {
+            "type": "string"
+          },
+          "original_path": {
+            "type": "string"
+          },
+          "media_type": {
+            "type": "string"
+          },
+          "order_index": {
+            "type": "integer"
+          },
+          "original_filename": {
+            "type": "string"
+          },
+          "metadata": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    "audio_sources": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "audio_source_id": {
+            "type": "string"
+          },
+          "input_source_id": {
+            "type": "string"
+          },
+          "audio_path": {
+            "type": "string"
+          },
+          "normalized_asset": {
+            "type": "object"
+          },
+          "audio_format": {
+            "type": "string"
+          },
+          "duration_seconds": {
+            "type": "number"
+          },
+          "order_index": {
+            "type": "integer"
+          },
+          "extracted_from_video": {
+            "type": "boolean"
+          },
+          "processing_status": {
+            "type": "string"
+          },
+          "metadata": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    "transcript": {
+      "type": "object",
+      "properties": {
+        "full_text": {
+          "type": "string"
+        },
+        "chunk_count": {
+          "type": "integer"
+        },
+        "aligned_source_count": {
+          "type": "integer"
+        },
+        "aligned_segment_count": {
+          "type": "integer"
+        },
+        "aligned_word_count": {
+          "type": "integer"
+        },
+        "diarization_segment_count": {
+          "type": "integer"
+        },
+        "speaker_count": {
+          "type": "integer"
+        },
+        "utterance_count": {
+          "type": "integer"
+        },
+        "utterance_with_speaker_count": {
+          "type": "integer"
+        },
+        "utterance_uncertain_speaker_count": {
+          "type": "integer"
+        },
+        "sentence_count": {
+          "type": "integer"
+        },
+        "sentence_with_speaker_count": {
+          "type": "integer"
+        },
+        "merged_unit_count": {
+          "type": "integer"
+        },
+        "detected_languages": {
+          "type": "array"
+        }
+      }
+    },
+    "merged_transcript": {
+      "type": "object",
+      "properties": {
+        "session_id": {
+          "type": "string"
+        },
+        "units": {
+          "type": "array"
+        },
+        "full_text": {
+          "type": "string"
+        },
+        "detected_languages": {
+          "type": "array"
+        },
+        "metadata": {
+          "type": "object"
+        }
+      }
+    },
+    "transcript_chunks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "chunk_id": {
+            "type": "string"
+          },
+          "audio_source_id": {
+            "type": "string"
+          },
+          "start_seconds": {
+            "type": "number"
+          },
+          "end_seconds": {
+            "type": "number"
+          },
+          "text": {
+            "type": "string"
+          },
+          "detected_language": {
+            "type": "string"
+          },
+          "language_confidence": {
+            "type": "number"
+          },
+          "metadata": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    "aligned_transcripts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "audio_source_id": {
+            "type": "string"
+          },
+          "source_audio_path": {
+            "type": "string"
+          },
+          "detected_language": {
+            "type": "string"
+          },
+          "source_chunk_count": {
+            "type": "integer"
+          },
+          "segments": {
+            "type": "array"
+          },
+          "metadata": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    "diarization_segments": {
+      "type": "array"
+    },
+    "utterances": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "utterance_id": {
+            "type": "string"
+          },
+          "audio_source_id": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          },
+          "start_seconds": {
+            "type": "number"
+          },
+          "end_seconds": {
+            "type": "number"
+          },
+          "aligned_segment_id": {
+            "type": "string"
+          },
+          "aligned_segment_index": {
+            "type": "integer"
+          },
+          "transcript_chunk_id": {
+            "type": "string"
+          },
+          "start_word_index": {
+            "type": "integer"
+          },
+          "end_word_index": {
+            "type": "integer"
+          },
+          "source_word_ids": {
+            "type": "array"
+          },
+          "detected_language": {
+            "type": "string"
+          },
+          "speaker_attribution_status": {
+            "type": "string"
+          },
+          "speaker_confidence_score": {
+            "type": "number"
+          },
+          "speaker_is_uncertain": {
+            "type": "boolean"
+          },
+          "metadata": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    "sentences": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "sentence_id": {
+            "type": "string"
+          },
+          "audio_source_id": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          },
+          "start_seconds": {
+            "type": "number"
+          },
+          "end_seconds": {
+            "type": "number"
+          },
+          "source_utterance_ids": {
+            "type": "array"
+          },
+          "source_utterance_start_index": {
+            "type": "integer"
+          },
+          "source_utterance_end_index": {
+            "type": "integer"
+          },
+          "detected_language": {
+            "type": "string"
+          },
+          "speaker_resolution_status": {
+            "type": "string"
+          },
+          "speaker_confidence_label": {
+            "type": "string"
+          },
+          "speaker_stability_label": {
+            "type": "string"
+          },
+          "speaker_assignment_method": {
+            "type": "string"
+          },
+          "speaker_evidence_summary": {
+            "type": "string"
+          },
+          "merge_safety_label": {
+            "type": "string"
+          },
+          "semantic_quality_label": {
+            "type": "string"
+          },
+          "length_bucket": {
+            "type": "string"
+          },
+          "duration_bucket": {
+            "type": "string"
+          },
+          "review_priority": {
+            "type": "string"
+          },
+          "sentence_review_flags": {
+            "type": "array"
+          },
+          "metadata": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    "segments": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "segment_id": {
+            "type": "string"
+          },
+          "start_seconds": {
+            "type": "number"
+          },
+          "end_seconds": {
+            "type": "number"
+          },
+          "text": {
+            "type": "string"
+          },
+          "transcript_chunk_ids": {
+            "type": "array"
+          },
+          "merged_transcript_unit_ids": {
+            "type": "array"
+          },
+          "sentence_ids": {
+            "type": "array"
+          },
+          "source_utterance_ids": {
+            "type": "array"
+          },
+          "audio_source_ids": {
+            "type": "array"
+          },
+          "observed_languages": {
+            "type": "array"
+          },
+          "estimated_speaker_roles": {
+            "type": "array"
+          },
+          "raw_speaker_labels": {
+            "type": "array"
+          },
+          "metadata": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    "speaker_role_estimates": {
+      "type": "array"
+    },
+    "qa_candidates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "qa_candidate_id": {
+            "type": "string"
+          },
+          "question_text": {
+            "type": "string"
+          },
+          "answer_text": {
+            "type": "string"
+          },
+          "context_text": {
+            "type": "string"
+          },
+          "question_unit_ids": {
+            "type": "array"
+          },
+          "answer_unit_ids": {
+            "type": "array"
+          },
+          "question_sentence_ids": {
+            "type": "array"
+          },
+          "answer_sentence_ids": {
+            "type": "array"
+          },
+          "context_sentence_ids": {
+            "type": "array"
+          },
+          "question_source_utterance_ids": {
+            "type": "array"
+          },
+          "answer_source_utterance_ids": {
+            "type": "array"
+          },
+          "context_source_utterance_ids": {
+            "type": "array"
+          },
+          "question_segment_id": {
+            "type": "string"
+          },
+          "answer_segment_id": {
+            "type": "string"
+          },
+          "context_strategy": {
+            "type": "string"
+          },
+          "context_confidence": {
+            "type": "string"
+          },
+          "start_seconds": {
+            "type": "number"
+          },
+          "end_seconds": {
+            "type": "number"
+          },
+          "question_timing": {
+            "type": "object"
+          },
+          "answer_timing": {
+            "type": "object"
+          },
+          "question_speaker_role": {
+            "type": "string"
+          },
+          "answer_speaker_role": {
+            "type": "string"
+          },
+          "source_segment_ids": {
+            "type": "array"
+          },
+          "confidence": {
+            "type": "number"
+          },
+          "confidence_label": {
+            "type": "string"
+          },
+          "confidence_score": {
+            "type": "number"
+          },
+          "question_type": {
+            "type": "string"
+          },
+          "didactic_question_score": {
+            "type": "number"
+          },
+          "answer_is_question": {
+            "type": "boolean"
+          },
+          "reason_codes": {
+            "type": "array"
+          },
+          "review_flags": {
+            "type": "array"
+          },
+          "extraction_notes": {
+            "type": "string"
+          },
+          "metadata": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    "pipeline_timing": {
+      "type": "object",
+      "properties": {
+        "stages": {
+          "type": "array"
+        },
+        "summary": {
+          "type": "object"
+        }
+      }
+    }
+  }
+}

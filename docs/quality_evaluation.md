@@ -284,3 +284,32 @@ in a real first run.
 5. Compare quality, QA/C count, observed runtime, and cold-equivalent runtime.
 6. Keep the simpler profile unless the heavier profile clearly improves quality.
 7. Record recurring failure modes before changing extraction logic.
+
+## Final Prototype Snapshot (2026-07-05)
+
+Development is frozen. The evaluation loop described above was executed across
+cycles R1-R10.1 (see `PROJECT_DIARY.md`) with external AI review of every run.
+
+Final benchmark, 7 inputs, `quality_local` + `structural`, speaker check and
+rescue ON:
+
+| input | candidates | keep | revise | reject |
+|---|---:|---:|---:|---:|
+| l25p08 (IT lecture, reference) | 7 | 6 | 1 | 0 |
+| l25p09 (IT lecture) | 5 | 1 | 3 | 1 |
+| ssl1p1 (monologue) | 0 | - | - | - |
+| eugenia_cheng (EN talk) | 15 | 9 | 4 | 2 |
+| stanford (seminar) | 11 | 6 | 3 | 2 |
+| dialoghi (IT interview) | 5 | 2 | 3 | 0 |
+| deep_time (panel) | 3 | 0 | 0 | 3 |
+
+Totals: 46 emitted, 52% keep, 30% revise, 17% reject.
+
+Reading guide: systematic false positives (polls, isolated tags, echo pairs,
+deflections, conversational management, monologue fragments) are gone; the
+monologue input correctly yields zero candidates; remaining revise-class
+defects are deictic/blackboard-dependent answers and rough span boundaries;
+remaining reject-class defects are semantic non-responsiveness (adjacent but
+non-answering replies) and multi-speaker panel content that needs full
+diarization. These are documented as out of prototype scope in
+`docs/prototype_closure_report.md`.

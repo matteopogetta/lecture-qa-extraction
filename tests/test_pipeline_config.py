@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 import unittest
 
 from lecture_analyzer.core.config import PipelineConfig
+from lecture_analyzer.core._pipeline_config_impl import (
+    DEFAULT_QA_SPEAKER_CHECK_MODEL_PATH,
+)
 
 
 class PipelineConfigProfileTests(unittest.TestCase):
@@ -23,6 +27,15 @@ class PipelineConfigProfileTests(unittest.TestCase):
         self.assertTrue(config.qa_semantic_retrieval_enabled)
         self.assertEqual(config.qa_answer_ranking_strategy, "semantic_reranker")
         self.assertTrue(config.qa_semantic_reranking_enabled)
+        self.assertFalse(config.qa_semantic_responsiveness_enabled)
+        self.assertEqual(
+            config.qa_speaker_check_enabled,
+            DEFAULT_QA_SPEAKER_CHECK_MODEL_PATH.exists(),
+        )
+        self.assertEqual(
+            config.qa_speaker_check_model_path,
+            DEFAULT_QA_SPEAKER_CHECK_MODEL_PATH.resolve(),
+        )
         self.assertTrue(config.export_debug_excel)
         self.assertFalse(config.export_ai_review_packet)
         self.assertFalse(config.export_evaluation_run)
@@ -39,9 +52,35 @@ class PipelineConfigProfileTests(unittest.TestCase):
         self.assertFalse(config.qa_semantic_retrieval_enabled)
         self.assertEqual(config.qa_answer_ranking_strategy, "rule_based")
         self.assertFalse(config.qa_semantic_reranking_enabled)
+        self.assertFalse(config.qa_semantic_responsiveness_enabled)
+        self.assertFalse(config.qa_semantic_responsiveness_gate_enabled)
         self.assertFalse(config.export_debug_excel)
+
+    def test_semantic_responsiveness_config_is_opt_in_and_normalized(self) -> None:
+        """Semantic responsiveness should remain off unless explicitly enabled."""
+
+        config = PipelineConfig(
+            qa_semantic_responsiveness_enabled=True,
+            qa_semantic_responsiveness_gate_enabled=True,
+            qa_semantic_responsiveness_max_candidates=-2,
+            qa_semantic_responsiveness_gate_min_score=2.0,
+            qa_semantic_responsiveness_gate_penalty=-0.5,
+        )
+
+        self.assertTrue(config.qa_semantic_responsiveness_enabled)
+        self.assertTrue(config.qa_semantic_responsiveness_gate_enabled)
+        self.assertEqual(config.qa_semantic_responsiveness_max_candidates, 0)
+        self.assertEqual(config.qa_semantic_responsiveness_gate_min_score, 1.0)
+        self.assertEqual(config.qa_semantic_responsiveness_gate_penalty, 0.0)
         self.assertFalse(config.export_ai_review_packet)
         self.assertFalse(config.export_evaluation_run)
+
+    def test_speaker_rescue_answer_cap_is_normalized(self) -> None:
+        """Rescued answer cap should always stay positive."""
+
+        config = PipelineConfig(qa_speaker_rescue_answer_word_cap=0)
+
+        self.assertEqual(config.qa_speaker_rescue_answer_word_cap, 1)
 
     def test_quality_profile_keeps_semantic_qa_without_diarization(self) -> None:
         """The quality profile should target QA quality without diarization."""
@@ -69,7 +108,27 @@ class PipelineConfigProfileTests(unittest.TestCase):
         self.assertFalse(config.qa_semantic_retrieval_enabled)
         self.assertEqual(config.qa_answer_ranking_strategy, "rule_based")
         self.assertFalse(config.qa_semantic_reranking_enabled)
+        self.assertEqual(
+            config.qa_speaker_check_enabled,
+            DEFAULT_QA_SPEAKER_CHECK_MODEL_PATH.exists(),
+        )
+        self.assertEqual(
+            config.qa_speaker_check_model_path,
+            DEFAULT_QA_SPEAKER_CHECK_MODEL_PATH.resolve(),
+        )
+        self.assertGreater(config.qa_speaker_rescue_max_checks_per_run, 0)
+        self.assertGreater(config.qa_speaker_rescue_max_candidates_per_run, 0)
         self.assertFalse(config.export_debug_excel)
+
+    def test_quality_local_speaker_check_falls_back_off_without_local_model(self) -> None:
+        """The profile should auto-enable speaker check only when the model exists."""
+
+        config = PipelineConfig(pipeline_profile="quality_local")
+
+        self.assertEqual(
+            config.qa_speaker_check_enabled,
+            Path(config.qa_speaker_check_model_path or "").exists(),
+        )
 
     def test_diagnostic_profile_runs_comparison_and_debug_outputs(self) -> None:
         """The diagnostic profile should enable the richer comparison surface."""

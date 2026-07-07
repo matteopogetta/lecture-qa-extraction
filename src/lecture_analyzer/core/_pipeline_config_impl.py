@@ -6,6 +6,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
+DEFAULT_QA_SPEAKER_CHECK_MODEL_PATH = (
+    Path(__file__).resolve().parents[3]
+    / "local_models"
+    / "spkrec-ecapa-voxceleb"
+)
 SUPPORTED_NORMALIZED_AUDIO_FORMATS = {"wav", "flac"}
 SUPPORTED_PIPELINE_PROFILES = {
     "current",
@@ -43,6 +48,8 @@ PIPELINE_PROFILE_SETTINGS: dict[str, dict[str, object]] = {
         "qa_semantic_retrieval_enabled": False,
         "qa_answer_ranking_strategy": "rule_based",
         "qa_semantic_reranking_enabled": False,
+        "qa_speaker_check_enabled": DEFAULT_QA_SPEAKER_CHECK_MODEL_PATH.exists(),
+        "qa_speaker_check_model_path": DEFAULT_QA_SPEAKER_CHECK_MODEL_PATH,
         "export_debug_excel": False,
     },
     "full": {
@@ -302,18 +309,39 @@ class PipelineConfig:
     deferred_answer_search_local_score_threshold: float = 0.38
     deferred_answer_search_min_signal_score: float = 0.18
     allow_cross_segment_answer: bool = True
-    qa_answer_search_strategy: str = "semantic_retrieval" #"local_rule_based"
-    qa_semantic_retrieval_enabled: bool = True #False
+    qa_answer_search_strategy: str = "semantic_retrieval"
+    qa_semantic_retrieval_enabled: bool = True
     qa_semantic_retrieval_model_name: str = "intfloat/multilingual-e5-base"
     qa_semantic_retrieval_top_k: int = 4
     qa_semantic_retrieval_window_units: int = 8
     qa_semantic_retrieval_min_similarity: float = 0.2
-    qa_answer_ranking_strategy: str = "semantic_reranker" #"rule_based"
-    qa_semantic_reranking_enabled: bool = True #False
+    qa_answer_ranking_strategy: str = "semantic_reranker"
+    qa_semantic_reranking_enabled: bool = True
     qa_semantic_reranking_model_name: str = "BAAI/bge-reranker-v2-m3"
     qa_semantic_reranking_max_candidates: int = 8
     qa_semantic_reranking_weight: float = 0.7
+    qa_semantic_responsiveness_enabled: bool = False
+    qa_semantic_responsiveness_model_name: str = (
+        "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+    )
+    qa_semantic_responsiveness_max_candidates: int = 15
+    qa_semantic_responsiveness_gate_enabled: bool = False
+    qa_semantic_responsiveness_gate_min_score: float = 0.45
+    qa_semantic_responsiveness_gate_penalty: float = 0.12
     answer_search_window_units: int = 3
+    qa_speaker_check_enabled: bool = DEFAULT_QA_SPEAKER_CHECK_MODEL_PATH.exists()
+    qa_speaker_check_model_path: Path | None = DEFAULT_QA_SPEAKER_CHECK_MODEL_PATH
+    qa_speaker_check_min_span_seconds: float = 1.5
+    qa_speaker_check_same_threshold: float = 0.72
+    qa_speaker_check_same_full_penalty_threshold: float = 0.85
+    qa_speaker_check_different_threshold: float = 0.45
+    qa_speaker_check_same_speaker_penalty: float = 0.25
+    qa_speaker_check_different_speaker_bonus: float = 0.04
+    qa_speaker_rescue_max_checks_per_run: int = 40
+    qa_speaker_rescue_max_candidates_per_run: int = 8
+    qa_speaker_rescue_min_confidence_margin: float = 0.08
+    qa_speaker_rescue_min_text_quality_score: float = 0.50
+    qa_speaker_rescue_answer_word_cap: int = 80
 
     # Output defaults.
     export_indent: int = 2
@@ -556,6 +584,23 @@ class PipelineConfig:
         }:
             self.segmentation_mode = "structural"
 
+        self.qa_semantic_responsiveness_model_name = (
+            self.qa_semantic_responsiveness_model_name.strip()
+            or "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+        )
+        self.qa_semantic_responsiveness_max_candidates = max(
+            0,
+            int(self.qa_semantic_responsiveness_max_candidates),
+        )
+        self.qa_semantic_responsiveness_gate_min_score = min(
+            1.0,
+            max(0.0, float(self.qa_semantic_responsiveness_gate_min_score)),
+        )
+        self.qa_semantic_responsiveness_gate_penalty = min(
+            1.0,
+            max(0.0, float(self.qa_semantic_responsiveness_gate_penalty)),
+        )
+
         # Clamp numeric settings to safe lower bounds so heuristic code can
         # rely on stable invariants without repeating validation.
         self.segmentation_max_gap_seconds = max(
@@ -711,6 +756,68 @@ class PipelineConfig:
             self.answer_search_window_units,
             int(self.qa_semantic_retrieval_window_units),
         )
+        if self.qa_speaker_check_model_path is not None:
+            self.qa_speaker_check_model_path = (
+                self.qa_speaker_check_model_path.expanduser().resolve()
+            )
+        self.qa_speaker_check_min_span_seconds = max(
+            0.0,
+            float(self.qa_speaker_check_min_span_seconds),
+        )
+        self.qa_speaker_check_same_threshold = min(
+            1.0,
+            max(-1.0, float(self.qa_speaker_check_same_threshold)),
+        )
+        self.qa_speaker_check_same_full_penalty_threshold = min(
+            1.0,
+            max(-1.0, float(self.qa_speaker_check_same_full_penalty_threshold)),
+        )
+        if (
+            self.qa_speaker_check_same_full_penalty_threshold
+            < self.qa_speaker_check_same_threshold
+        ):
+            self.qa_speaker_check_same_full_penalty_threshold = (
+                self.qa_speaker_check_same_threshold
+            )
+        self.qa_speaker_check_different_threshold = min(
+            1.0,
+            max(-1.0, float(self.qa_speaker_check_different_threshold)),
+        )
+        if (
+            self.qa_speaker_check_different_threshold
+            > self.qa_speaker_check_same_threshold
+        ):
+            self.qa_speaker_check_different_threshold = (
+                self.qa_speaker_check_same_threshold
+            )
+        self.qa_speaker_check_same_speaker_penalty = min(
+            1.0,
+            max(0.0, float(self.qa_speaker_check_same_speaker_penalty)),
+        )
+        self.qa_speaker_check_different_speaker_bonus = min(
+            1.0,
+            max(0.0, float(self.qa_speaker_check_different_speaker_bonus)),
+        )
+        self.qa_speaker_rescue_max_checks_per_run = max(
+            0,
+            int(self.qa_speaker_rescue_max_checks_per_run),
+        )
+        self.qa_speaker_rescue_max_candidates_per_run = max(
+            0,
+            int(self.qa_speaker_rescue_max_candidates_per_run),
+        )
+        self.qa_speaker_rescue_min_confidence_margin = min(
+            1.0,
+            max(0.0, float(self.qa_speaker_rescue_min_confidence_margin)),
+        )
+        self.qa_speaker_rescue_min_text_quality_score = min(
+            1.0,
+            max(0.0, float(self.qa_speaker_rescue_min_text_quality_score)),
+        )
+        self.qa_speaker_rescue_answer_word_cap = max(
+            1,
+            int(self.qa_speaker_rescue_answer_word_cap),
+        )
         self.segmentation_adaptive_transition_markers = tuple(
             marker.strip().lower()
             for marker in self.segmentation_adaptive_transition_markers
@@ -796,6 +903,34 @@ class PipelineConfig:
         """Return whether transcript cache artifacts may be reused as input."""
 
         return self.transcription_cache_enabled and not self.force_recompute
+
+    def speaker_check_config(self) -> object:
+        """Return the optional QA speaker-check configuration."""
+
+        from lecture_analyzer.analysis.qa_speaker_check import SpeakerCheckConfig
+
+        return SpeakerCheckConfig(
+            enabled=self.qa_speaker_check_enabled,
+            model_path=self.qa_speaker_check_model_path,
+            min_span_seconds=self.qa_speaker_check_min_span_seconds,
+            same_speaker_threshold=self.qa_speaker_check_same_threshold,
+            same_speaker_full_penalty_threshold=(
+                self.qa_speaker_check_same_full_penalty_threshold
+            ),
+            different_speaker_threshold=self.qa_speaker_check_different_threshold,
+            same_speaker_penalty=self.qa_speaker_check_same_speaker_penalty,
+            different_speaker_bonus=self.qa_speaker_check_different_speaker_bonus,
+            rescue_max_checks_per_run=self.qa_speaker_rescue_max_checks_per_run,
+            rescue_max_candidates_per_run=(
+                self.qa_speaker_rescue_max_candidates_per_run
+            ),
+            rescue_min_confidence_margin=(
+                self.qa_speaker_rescue_min_confidence_margin
+            ),
+            rescue_min_text_quality_score=(
+                self.qa_speaker_rescue_min_text_quality_score
+            ),
+        )
 
     @property
     def intermediate_artifact_reuse_enabled(self) -> bool:

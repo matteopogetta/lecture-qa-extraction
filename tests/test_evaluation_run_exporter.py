@@ -73,6 +73,20 @@ class EvaluationRunExporterTests(unittest.TestCase):
                 0.77,
             )
             self.assertEqual(
+                metrics["qa_quality_metrics"]["semantic_responsiveness_score"][
+                    "median"
+                ],
+                0.81,
+            )
+            self.assertEqual(
+                metrics["semantic_responsiveness_metrics"]["status"],
+                "applied",
+            )
+            self.assertEqual(
+                metrics["semantic_responsiveness_metrics"]["seconds_per_candidate"],
+                0.02,
+            )
+            self.assertEqual(
                 metrics["qa_quality_metrics"]["quality_band_counts"]["high"],
                 1,
             )
@@ -99,6 +113,18 @@ class EvaluationRunExporterTests(unittest.TestCase):
                 0.1,
             )
             self.assertNotIn("candidates", metrics["qa_quality_metrics"])
+            self.assertEqual(
+                metrics["qa_coverage"]["interrogative_sentence_count"],
+                2,
+            )
+            self.assertEqual(metrics["qa_coverage"]["emitted_candidate_count"], 1)
+            self.assertEqual(metrics["qa_coverage"]["coverage_ratio"], 0.5)
+            self.assertEqual(metrics["qa_coverage"]["suppressed_by_gate_count"], 1)
+            self.assertEqual(
+                metrics["qa_coverage"]["suppressed_by_gate_reasons"],
+                {"same_sentence_without_answer_cue": 1},
+            )
+            self.assertNotIn("candidates", metrics["qa_coverage"])
             self.assertEqual(
                 metrics["runtime_metrics"]["zero_or_near_zero_reused_stages"],
                 ["transcription"],
@@ -166,6 +192,68 @@ class EvaluationRunExporterTests(unittest.TestCase):
             self.assertNotEqual(first_directory, second_directory)
             self.assertEqual(second_directory.name, "2026-06-21_light_2")
 
+    def test_export_evaluation_run_canonicalizes_known_duplicate_input_labels(self) -> None:
+        """Known benchmark aliases should converge to one evaluations folder."""
+
+        with tempfile.TemporaryDirectory() as temp_directory:
+            temp_path = Path(temp_directory)
+            source_json_path = temp_path / "source_session.json"
+            source_json_path.write_text("{}", encoding="utf-8")
+            evaluation_root = temp_path / "evaluations"
+            session = self._build_session(temp_path / "ICWROS.mp3")
+
+            stanford_directory = export_evaluation_run(
+                session,
+                source_json_path=source_json_path,
+                evaluation_root=evaluation_root,
+                input_label=(
+                    "stanford_seminar_human_centered_explainable_ai_from_algorithms_to_user_experiences"
+                ),
+                run_label="stanford_run",
+            )
+            dialoghi_directory = export_evaluation_run(
+                session,
+                source_json_path=source_json_path,
+                evaluation_root=evaluation_root,
+                input_label=(
+                    "dialoghi_di_scienza_ep2_dialoghi_di_scienza_ep2_-_astrofisica"
+                ),
+                run_label="dialoghi_run",
+            )
+
+            self.assertEqual(
+                stanford_directory.parent.parent.name,
+                "stanford_seminar_-_human-centered_explainable_ai_from_algorithms_to_user_experiences",
+            )
+            self.assertEqual(
+                dialoghi_directory.parent.parent.name,
+                "dialoghi_di_scienza_ep2_-_astrofisica",
+            )
+
+    def test_export_evaluation_run_canonicalizes_normalized_audio_stems(self) -> None:
+        """Input labels derived from normalized WAV names should not fork history."""
+
+        with tempfile.TemporaryDirectory() as temp_directory:
+            temp_path = Path(temp_directory)
+            source_json_path = temp_path / "source_session.json"
+            source_json_path.write_text("{}", encoding="utf-8")
+            session = self._build_session(temp_path / "ICWROS.mp3")
+
+            run_directory = export_evaluation_run(
+                session,
+                source_json_path=source_json_path,
+                evaluation_root=temp_path / "evaluations",
+                input_label=(
+                    "001_dialoghi_di_scienza_ep2_astrofisica_mono_16000hz"
+                ),
+                run_label="dialoghi_run",
+            )
+
+            self.assertEqual(
+                run_directory.parent.parent.name,
+                "dialoghi_di_scienza_ep2_-_astrofisica",
+            )
+
     @staticmethod
     def _build_session(input_path: Path) -> LectureSession:
         """Return a compact session for evaluation export tests."""
@@ -184,6 +272,25 @@ class EvaluationRunExporterTests(unittest.TestCase):
                 "pipeline_profile": "light",
                 "pipeline_execution_mode": "normal",
                 "segmentation_mode": "structural",
+                "qa_coverage": {
+                    "interrogative_sentence_count": 2,
+                    "emitted_candidate_count": 1,
+                    "coverage_ratio": 0.5,
+                    "suppressed_by_gate_count": 1,
+                    "suppressed_by_gate_reasons": {
+                        "same_sentence_without_answer_cue": 1,
+                    },
+                },
+                "qa_semantic_responsiveness": {
+                    "schema_version": "1.0",
+                    "enabled": True,
+                    "status": "applied",
+                    "scored_candidate_count": 1,
+                    "total_seconds": 0.02,
+                    "seconds_per_candidate": 0.02,
+                    "load_seconds": 0.1,
+                    "model_footprint_bytes": 12_345,
+                },
             },
             transcript_text="What is a matrix? A matrix is an array.",
             qa_candidates=[
@@ -198,6 +305,7 @@ class EvaluationRunExporterTests(unittest.TestCase):
                             "question_quality_score": 0.86,
                             "answer_quality_score": 0.84,
                             "answer_responsiveness_score": 0.77,
+                            "semantic_responsiveness_score": 0.81,
                             "context_quality_score": 0.75,
                             "grounding_quality_score": 0.90,
                             "risk_score": 0.12,

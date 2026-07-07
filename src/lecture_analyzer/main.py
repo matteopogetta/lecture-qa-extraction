@@ -196,6 +196,138 @@ def build_parser() -> argparse.ArgumentParser:
         help="Official segmentation mode: structural, windowed, adaptive, or both.",
     )
     parser.add_argument(
+        "--enable-qa-speaker-check",
+        action="store_true",
+        help=(
+            "Enable the post-extraction QA speaker-similarity check. By "
+            "default it runs automatically only when the configured local "
+            "speaker model exists."
+        ),
+    )
+    parser.add_argument(
+        "--qa-speaker-model-path",
+        default=None,
+        help=(
+            "Local SpeechBrain/ECAPA speaker embedding model directory. "
+            "No model is downloaded at runtime when this is missing; the "
+            "project-local model path is used by default."
+        ),
+    )
+    parser.add_argument(
+        "--qa-speaker-min-span-seconds",
+        default=1.5,
+        type=float,
+        help="Minimum question/answer span duration for the speaker check.",
+    )
+    parser.add_argument(
+        "--qa-speaker-same-threshold",
+        default=0.72,
+        type=float,
+        help="Cosine threshold above which same speaker is suspected.",
+    )
+    parser.add_argument(
+        "--qa-speaker-same-full-penalty-threshold",
+        default=0.85,
+        type=float,
+        help=(
+            "Cosine threshold at or above which the full same-speaker penalty "
+            "is applied; values between same-threshold and this are graduated."
+        ),
+    )
+    parser.add_argument(
+        "--qa-speaker-different-threshold",
+        default=0.45,
+        type=float,
+        help="Cosine threshold below which different speaker is likely.",
+    )
+    parser.add_argument(
+        "--qa-speaker-same-penalty",
+        default=0.25,
+        type=float,
+        help=(
+            "Confidence penalty for same-speaker suspected candidates when "
+            "no local Socratic pattern is recognized."
+        ),
+    )
+    parser.add_argument(
+        "--qa-speaker-rescue-max-checks",
+        default=40,
+        type=int,
+        help=(
+            "Maximum suppressed soft-gate candidates to speaker-check for "
+            "quality_local rescue. Set 0 to disable rescue checks."
+        ),
+    )
+    parser.add_argument(
+        "--qa-speaker-rescue-max-candidates",
+        default=8,
+        type=int,
+        help=(
+            "Maximum speaker-assisted rescued candidates to emit per "
+            "quality_local run. Set 0 to disable rescue emission."
+        ),
+    )
+    parser.add_argument(
+        "--qa-speaker-rescue-confidence-margin",
+        default=0.08,
+        type=float,
+        help=(
+            "Allowed below-min-confidence margin for speaker-assisted rescue "
+            "candidates."
+        ),
+    )
+    parser.add_argument(
+        "--qa-speaker-rescue-min-text-quality",
+        default=0.50,
+        type=float,
+        help=(
+            "Minimum existing question/answer quality score required before "
+            "speaker-assisted rescue can emit a candidate."
+        ),
+    )
+    parser.add_argument(
+        "--enable-qa-semantic-responsiveness",
+        action="store_true",
+        help=(
+            "Enable optional local embedding semantic responsiveness scoring "
+            "over already-extracted QA candidates only. Default is off."
+        ),
+    )
+    parser.add_argument(
+        "--qa-semantic-responsiveness-model",
+        default=None,
+        help=(
+            "Local path or already-cached Hugging Face id for the optional "
+            "semantic responsiveness sentence embedding model."
+        ),
+    )
+    parser.add_argument(
+        "--qa-semantic-responsiveness-max-candidates",
+        default=None,
+        type=int,
+        help="Maximum extracted QA candidates scored by semantic responsiveness.",
+    )
+    parser.add_argument(
+        "--enable-qa-semantic-responsiveness-gate",
+        action="store_true",
+        help=(
+            "Apply the configured semantic responsiveness penalty gate. "
+            "Default is off unless this flag is supplied."
+        ),
+    )
+    parser.add_argument(
+        "--qa-semantic-responsiveness-gate-min-score",
+        default=None,
+        type=float,
+        help="Minimum semantic responsiveness score before gate penalty applies.",
+    )
+    parser.add_argument(
+        "--qa-semantic-responsiveness-gate-penalty",
+        default=None,
+        type=float,
+        help="Confidence/final-quality penalty for weak semantic responsiveness.",
+    )
+    parser.add_argument(
         "--export-ai-review-packet",
         action="store_true",
         help=(
@@ -279,6 +411,23 @@ def should_use_root_pipeline(args: argparse.Namespace) -> bool:
             args.min_speakers is not None,
             args.max_speakers is not None,
             args.segmentation_mode != "structural",
+            args.enable_qa_speaker_check,
+            args.qa_speaker_model_path is not None,
+            args.qa_speaker_min_span_seconds != 1.5,
+            args.qa_speaker_same_threshold != 0.72,
+            args.qa_speaker_same_full_penalty_threshold != 0.85,
+            args.qa_speaker_different_threshold != 0.45,
+            args.qa_speaker_same_penalty != 0.25,
+            args.qa_speaker_rescue_max_checks != 40,
+            args.qa_speaker_rescue_max_candidates != 8,
+            args.qa_speaker_rescue_confidence_margin != 0.08,
+            args.qa_speaker_rescue_min_text_quality != 0.50,
+            args.enable_qa_semantic_responsiveness,
+            args.qa_semantic_responsiveness_model is not None,
+            args.qa_semantic_responsiveness_max_candidates is not None,
+            args.enable_qa_semantic_responsiveness_gate,
+            args.qa_semantic_responsiveness_gate_min_score is not None,
+            args.qa_semantic_responsiveness_gate_penalty is not None,
             args.export_ai_review_packet,
             args.ai_review_packet_path is not None,
             args.export_evaluation_run,
@@ -373,6 +522,68 @@ def run_root_pipeline(args: argparse.Namespace, parser: argparse.ArgumentParser)
         config_overrides["diarization_max_speakers"] = args.max_speakers
     if args.segmentation_mode != "structural":
         config_overrides["segmentation_mode"] = args.segmentation_mode
+    if args.enable_qa_speaker_check:
+        config_overrides["qa_speaker_check_enabled"] = True
+    if args.qa_speaker_model_path is not None:
+        config_overrides["qa_speaker_check_model_path"] = Path(
+            args.qa_speaker_model_path,
+        )
+    if args.qa_speaker_min_span_seconds != 1.5:
+        config_overrides["qa_speaker_check_min_span_seconds"] = (
+            args.qa_speaker_min_span_seconds
+        )
+    if args.qa_speaker_same_threshold != 0.72:
+        config_overrides["qa_speaker_check_same_threshold"] = (
+            args.qa_speaker_same_threshold
+        )
+    if args.qa_speaker_same_full_penalty_threshold != 0.85:
+        config_overrides["qa_speaker_check_same_full_penalty_threshold"] = (
+            args.qa_speaker_same_full_penalty_threshold
+        )
+    if args.qa_speaker_different_threshold != 0.45:
+        config_overrides["qa_speaker_check_different_threshold"] = (
+            args.qa_speaker_different_threshold
+        )
+    if args.qa_speaker_same_penalty != 0.25:
+        config_overrides["qa_speaker_check_same_speaker_penalty"] = (
+            args.qa_speaker_same_penalty
+        )
+    if args.qa_speaker_rescue_max_checks != 40:
+        config_overrides["qa_speaker_rescue_max_checks_per_run"] = (
+            args.qa_speaker_rescue_max_checks
+        )
+    if args.qa_speaker_rescue_max_candidates != 8:
+        config_overrides["qa_speaker_rescue_max_candidates_per_run"] = (
+            args.qa_speaker_rescue_max_candidates
+        )
+    if args.qa_speaker_rescue_confidence_margin != 0.08:
+        config_overrides["qa_speaker_rescue_min_confidence_margin"] = (
+            args.qa_speaker_rescue_confidence_margin
+        )
+    if args.qa_speaker_rescue_min_text_quality != 0.50:
+        config_overrides["qa_speaker_rescue_min_text_quality_score"] = (
+            args.qa_speaker_rescue_min_text_quality
+        )
+    if args.enable_qa_semantic_responsiveness:
+        config_overrides["qa_semantic_responsiveness_enabled"] = True
+    if args.qa_semantic_responsiveness_model is not None:
+        config_overrides["qa_semantic_responsiveness_model_name"] = (
+            args.qa_semantic_responsiveness_model
+        )
+    if args.qa_semantic_responsiveness_max_candidates is not None:
+        config_overrides["qa_semantic_responsiveness_max_candidates"] = (
+            args.qa_semantic_responsiveness_max_candidates
+        )
+    if args.enable_qa_semantic_responsiveness_gate:
+        config_overrides["qa_semantic_responsiveness_gate_enabled"] = True
+    if args.qa_semantic_responsiveness_gate_min_score is not None:
+        config_overrides["qa_semantic_responsiveness_gate_min_score"] = (
+            args.qa_semantic_responsiveness_gate_min_score
+        )
+    if args.qa_semantic_responsiveness_gate_penalty is not None:
+        config_overrides["qa_semantic_responsiveness_gate_penalty"] = (
+            args.qa_semantic_responsiveness_gate_penalty
+        )
     if args.export_ai_review_packet:
         config_overrides["export_ai_review_packet"] = True
     if args.ai_review_packet_path is not None:

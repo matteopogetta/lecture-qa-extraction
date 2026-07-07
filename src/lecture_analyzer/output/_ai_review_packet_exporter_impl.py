@@ -47,6 +47,7 @@ def build_ai_review_packet(
         if isinstance(stage, dict)
     ]
     qa_candidates = list(payload.get("qa_candidates") or [])
+    qa_coverage = _as_dict(metadata.get("qa_coverage"))
     total_duration_seconds = _safe_float(
         timing_summary.get("total_duration_seconds"),
     )
@@ -133,6 +134,13 @@ def build_ai_review_packet(
         "stage with near-zero duration may mean previous artifacts were reused, "
         "not that the underlying cold-run stage is free.",
         "",
+        "## Coverage Summary",
+        "",
+        _format_coverage_summary(
+            qa_coverage,
+            emitted_candidate_count=len(qa_candidates),
+        ),
+        "",
         "## Timing Stage Details",
         "",
         _format_timing_stage_table(
@@ -171,6 +179,7 @@ def _format_candidate(index: int, candidate: dict[str, Any]) -> list[str]:
     metadata = _as_dict(candidate.get("metadata"))
     pairing_debug = _as_dict(metadata.get("pairing_debug"))
     answer_debug = _as_dict(metadata.get("answer_debug"))
+    speaker_check = _as_dict(metadata.get("speaker_check"))
 
     return [
         f"### Candidate {index}: `{candidate.get('qa_candidate_id', '')}`",
@@ -187,6 +196,9 @@ def _format_candidate(index: int, candidate: dict[str, Any]) -> list[str]:
         f"- context_confidence: `{candidate.get('context_confidence', '')}`",
         f"- reason_codes: `{', '.join(candidate.get('reason_codes') or [])}`",
         f"- review_flags: `{', '.join(candidate.get('review_flags') or [])}`",
+        f"- speaker_similarity_score: `{speaker_check.get('speaker_similarity_score', '')}`",
+        f"- speaker_check_flags: `{', '.join(speaker_check.get('flags') or [])}`",
+        f"- speaker_check_note: `{speaker_check.get('note', '')}`",
         f"- search_strategy: `{pairing_debug.get('effective_search_strategy') or pairing_debug.get('search_strategy') or ''}`",
         f"- ranking_strategy: `{pairing_debug.get('effective_ranking_strategy') or pairing_debug.get('ranking_strategy') or ''}`",
         f"- answer_candidate_channel: `{_as_dict(answer_debug.get('search_signals')).get('candidate_channel', '')}`",
@@ -283,6 +295,99 @@ def _format_runtime_review_signals(
             "- interpretation: no cache/artifact reuse was reported in timing summary.",
         )
     return "\n".join(lines)
+
+
+def _format_coverage_summary(
+    qa_coverage: dict[str, Any],
+    *,
+    emitted_candidate_count: int,
+) -> str:
+    """Return compact QA coverage counters for external review."""
+
+    interrogative_count = int(
+        _safe_float(qa_coverage.get("interrogative_sentence_count"), 0.0) or 0,
+    )
+    emitted_count = int(
+        _safe_float(
+            qa_coverage.get("emitted_candidate_count"),
+            float(emitted_candidate_count),
+        )
+        or 0,
+    )
+    suppressed_reasons = _as_dict(qa_coverage.get("suppressed_by_gate_reasons"))
+    rescued_reasons = _as_dict(qa_coverage.get("rescued_by_gate_reasons"))
+    rescue_rejected_reasons = _as_dict(
+        qa_coverage.get("speaker_rescue_rejected_reasons"),
+    )
+    speaker_check_flag_counts = _as_dict(
+        qa_coverage.get("speaker_check_flag_counts"),
+    )
+    rescued_count = int(
+        _safe_float(qa_coverage.get("rescued_candidate_count"), 0.0) or 0,
+    )
+    suppressed_count = int(
+        _safe_float(
+            qa_coverage.get("suppressed_by_gate_count"),
+            float(
+                sum(
+                    int(_safe_float(count, 0.0) or 0)
+                    for count in suppressed_reasons.values()
+                ),
+            ),
+        )
+        or 0,
+    )
+    coverage_ratio = (
+        round(emitted_count / interrogative_count, 4)
+        if interrogative_count
+        else 0
+    )
+    reason_text = ", ".join(
+        f"{reason}={int(_safe_float(count, 0.0) or 0)}"
+        for reason, count in sorted(suppressed_reasons.items())
+    )
+    if not reason_text:
+        reason_text = "none"
+    rescued_reason_text = ", ".join(
+        f"{reason}={int(_safe_float(count, 0.0) or 0)}"
+        for reason, count in sorted(rescued_reasons.items())
+    )
+    if not rescued_reason_text:
+        rescued_reason_text = "none"
+    rescue_rejected_reason_text = ", ".join(
+        f"{reason}={int(_safe_float(count, 0.0) or 0)}"
+        for reason, count in sorted(rescue_rejected_reasons.items())
+    )
+    if not rescue_rejected_reason_text:
+        rescue_rejected_reason_text = "none"
+    speaker_flag_text = ", ".join(
+        f"{flag}={int(_safe_float(count, 0.0) or 0)}"
+        for flag, count in sorted(speaker_check_flag_counts.items())
+    )
+    if not speaker_flag_text:
+        speaker_flag_text = "none"
+
+    return "\n".join(
+        [
+            f"- interrogative_sentence_count: `{interrogative_count}`",
+            f"- emitted_candidate_count: `{emitted_count}`",
+            f"- coverage_ratio: `{coverage_ratio}`",
+            f"- suppressed_by_gate_count: `{suppressed_count}`",
+            f"- suppressed_by_gate_reasons: `{reason_text}`",
+            f"- rescued_candidate_count: `{rescued_count}`",
+            f"- rescued_by_gate_reasons: `{rescued_reason_text}`",
+            f"- speaker_rescue_attempted_candidate_count: `{qa_coverage.get('speaker_rescue_attempted_candidate_count', 0)}`",
+            f"- speaker_rescue_checked_candidate_count: `{qa_coverage.get('speaker_rescue_checked_candidate_count', 0)}`",
+            f"- speaker_rescue_rejected_candidate_count: `{qa_coverage.get('speaker_rescue_rejected_candidate_count', 0)}`",
+            f"- speaker_rescue_rejected_reasons: `{rescue_rejected_reason_text}`",
+            f"- speaker_rescue_total_check_seconds: `{qa_coverage.get('speaker_rescue_total_check_seconds', 0)}`",
+            f"- speaker_check_flag_counts: `{speaker_flag_text}`",
+            f"- speaker_check_checked_candidate_count: `{qa_coverage.get('speaker_check_checked_candidate_count', 0)}`",
+            f"- speaker_check_unavailable_candidate_count: `{qa_coverage.get('speaker_check_unavailable_candidate_count', 0)}`",
+            f"- speaker_check_skipped_candidate_count: `{qa_coverage.get('speaker_check_skipped_candidate_count', 0)}`",
+            f"- speaker_check_precomputed_candidate_count: `{qa_coverage.get('speaker_check_precomputed_candidate_count', 0)}`",
+        ],
+    )
 
 
 def _format_timing(value: object) -> str:

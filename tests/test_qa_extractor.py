@@ -11,6 +11,10 @@ from lecture_analyzer.analysis.semantic_reranking import (
     SemanticRerankScore,
     SemanticRerankingUnavailableError,
 )
+from lecture_analyzer.analysis.semantic_responsiveness import (
+    SemanticResponsivenessScore,
+    SemanticResponsivenessUnavailableError,
+)
 from lecture_analyzer.analysis.semantic_retrieval import (
     SemanticRetrievalUnavailableError,
     SemanticSearchHit,
@@ -20,6 +24,7 @@ from lecture_analyzer.core.models import (
     LectureSession,
     MergedTranscript,
     MergedTranscriptUnit,
+    QAPairCandidate,
     Segment,
     Sentence,
     Utterance,
@@ -124,6 +129,52 @@ class QAPairExtractorTests(unittest.TestCase):
             del query_text, passage_texts, normalize_scores
             raise SemanticRerankingUnavailableError(
                 "semantic reranker unavailable for test",
+            )
+
+    class _FakeSemanticResponsivenessBackend:
+        """Deterministic semantic responsiveness backend used by unit tests."""
+
+        backend_name = "fake_semantic_responsiveness"
+        model_name = "fake-local-multilingual-mini"
+        load_seconds = 0.123
+        model_footprint_bytes = 12_345_678
+
+        def __init__(self, scores_by_answer: dict[str, SemanticResponsivenessScore]) -> None:
+            self._scores_by_answer = scores_by_answer
+
+        def score_candidates(self, candidates: list[object]) -> list[SemanticResponsivenessScore]:
+            scores: list[SemanticResponsivenessScore] = []
+            for candidate in candidates:
+                answer_text = str(getattr(candidate, "answer_text"))
+                score = self._scores_by_answer[answer_text]
+                scores.append(
+                    SemanticResponsivenessScore(
+                        candidate_index=int(getattr(candidate, "candidate_index")),
+                        score=score.score,
+                        question_answer_similarity=score.question_answer_similarity,
+                        answer_continuation_similarity=(
+                            score.answer_continuation_similarity
+                        ),
+                        echo_penalty=score.echo_penalty,
+                        continuation_penalty=score.continuation_penalty,
+                        elapsed_seconds=score.elapsed_seconds,
+                        metadata=dict(score.metadata),
+                    ),
+                )
+            return scores
+
+    class _UnavailableSemanticResponsivenessBackend:
+        """Semantic responsiveness backend stub that simulates a missing model."""
+
+        backend_name = "fake_missing_semantic_responsiveness"
+        model_name = "fake-local-multilingual-mini"
+        load_seconds = None
+        model_footprint_bytes = None
+
+        def score_candidates(self, candidates: list[object]) -> list[SemanticResponsivenessScore]:
+            del candidates
+            raise SemanticResponsivenessUnavailableError(
+                "local semantic responsiveness model missing for test",
             )
 
     def test_extracts_explicit_question_with_next_sentence_answer(self) -> None:
@@ -1060,8 +1111,8 @@ class QAPairExtractorTests(unittest.TestCase):
 
         session = self._build_session(
             texts=[
-                "Come sempre, le prime lezioni sono sempre un po' così.",
-                "Allora, corso di segnali e sistemi. Benvenuti a tutti.",
+                "What is marker alpha?",
+                "So the beta placeholder begins now.",
             ],
             segment_text_indexes=[[0, 1]],
         )
@@ -1098,6 +1149,35 @@ class QAPairExtractorTests(unittest.TestCase):
 
         self.assertIn("thin_context_risk", candidate.metadata["quality_features"]["risk_reasons"])
 
+    def test_quality_local_emits_valid_qa_with_only_thin_context_risk(self) -> None:
+        """Thin context should be review-visible without suppressing valid QA."""
+
+        session = self._build_session(
+            texts=[
+                "These two.",
+                "What is marker alpha?",
+                "Marker alpha is the threshold for the stable region.",
+            ],
+            segment_text_indexes=[[0, 1, 2]],
+        )
+
+        candidates = self._build_extractor(
+            pipeline_profile="quality_local",
+            qa_answer_search_strategy="local_rule_based",
+            qa_answer_ranking_strategy="rule_based",
+            min_qa_confidence=0.0,
+        ).extract(session)
+
+        self.assertEqual(len(candidates), 1)
+        self.assertIn(
+            "thin_context_risk",
+            candidates[0].metadata["quality_features"]["risk_reasons"],
+        )
+        self.assertEqual(
+            session.metadata["qa_coverage"]["suppressed_by_gate_reasons"],
+            {},
+        )
+
     def test_quality_local_rejects_weak_responsiveness_with_thin_context(self) -> None:
         """Weak local answers should not pass when context adds no support."""
 
@@ -1118,6 +1198,102 @@ class QAPairExtractorTests(unittest.TestCase):
         ).extract(session)
 
         self.assertEqual(candidates, [])
+        suppression_reasons = session.metadata["qa_coverage"][
+            "suppressed_by_gate_reasons"
+        ]
+        self.assertEqual(sum(suppression_reasons.values()), 1)
+        self.assertNotIn("thin_context_risk", suppression_reasons)
+
+    def test_quality_local_does_not_revive_fragile_question_from_context_risk(
+        self,
+    ) -> None:
+        """Context-only quality risk should not override Q/A fragility."""
+
+        extractor = self._build_extractor(
+            pipeline_profile="quality_local",
+            min_qa_confidence=0.0,
+        )
+        candidate = QAPairCandidate(
+            qa_candidate_id="qa_test",
+            question_text="Marker alpha explains why response beta continues",
+            answer_text="Response beta continues through stable transition gamma.",
+            confidence=0.58,
+            reason_codes=[
+                "question_without_terminal_mark_recovered",
+                "split_question_recomposed",
+            ],
+            metadata={
+                "answer_debug": {
+                    "answer_distance_units": 1,
+                    "partial_scores": {},
+                },
+                "quality_features": {
+                    "risk_reasons": ["thin_context_risk"],
+                    "risk_score": 0.16,
+                    "final_quality_score": 0.58,
+                    "answer_quality_score": 0.62,
+                    "answer_responsiveness_score": 0.72,
+                },
+                "question_debug": {},
+            },
+        )
+
+        self.assertFalse(extractor._should_emit_qa_candidate(candidate))
+        self.assertEqual(
+            extractor._qa_candidate_suppression_reason(candidate),
+            "question_without_terminal_mark_recovered",
+        )
+
+    def test_quality_local_keeps_socratic_short_answer_with_context_penalty(
+        self,
+    ) -> None:
+        """Thin context penalty alone should not suppress a valid short answer."""
+
+        extractor = self._build_extractor(
+            pipeline_profile="quality_local",
+            min_qa_confidence=0.0,
+        )
+        candidate = QAPairCandidate(
+            qa_candidate_id="qa_test",
+            question_text="Then do what?",
+            answer_text="Apply marker alpha.",
+            confidence=0.463,
+            reason_codes=[
+                "question_mark",
+                "answer_in_same_sentence",
+                "answer_keyword_overlap",
+                "socratic_short_answer_support",
+            ],
+            metadata={
+                "answer_debug": {
+                    "answer_distance_units": 0,
+                    "partial_scores": {
+                        "answer_cues": 0.0,
+                        "answer_context": 0.0,
+                        "keyword_overlap": 0.12,
+                        "span_completeness": 0.0,
+                    },
+                },
+                "quality_features": {
+                    "risk_reasons": [
+                        "competing_question",
+                        "low_sentence_autonomy",
+                        "weak_context_risk",
+                        "thin_context_risk",
+                    ],
+                    "risk_score": 0.58,
+                    "final_quality_score": 0.2994,
+                    "answer_quality_score": 0.64,
+                    "answer_responsiveness_score": 0.566,
+                    "quality_band": "low",
+                    "risk_band": "medium",
+                },
+                "question_debug": {},
+            },
+        )
+
+        self.assertTrue(extractor._should_emit_qa_candidate(candidate))
+        self.assertIsNone(extractor._qa_candidate_suppression_reason(candidate))
 
     def test_quality_local_rejects_low_autonomy_weak_question(self) -> None:
         """Weak embedded question fragments need enough autonomy to export."""
@@ -2023,6 +2199,56 @@ class QAPairExtractorTests(unittest.TestCase):
 
         self.assertEqual(candidates, [])
 
+    def test_qa_coverage_counts_emitted_and_gate_suppressed_candidates(self) -> None:
+        """Coverage aggregates should expose recall proxy counts only."""
+
+        session = self._build_session(
+            texts=[
+                "What does marker alpha represent?",
+                "Marker alpha represents the stable threshold for response beta.",
+                "Where are we going? The next marker gamma topic begins here.",
+            ],
+            segment_text_indexes=[[0, 1, 2]],
+        )
+
+        candidates = self._build_extractor(
+            pipeline_profile="quality_local",
+            qa_answer_search_strategy="local_rule_based",
+            qa_answer_ranking_strategy="rule_based",
+            min_qa_confidence=0.0,
+        ).extract(session)
+
+        self.assertEqual(len(candidates), 1)
+        coverage = session.metadata["qa_coverage"]
+        self.assertEqual(coverage["interrogative_sentence_count"], 2)
+        self.assertEqual(coverage["emitted_candidate_count"], 1)
+        self.assertEqual(coverage["coverage_ratio"], 0.5)
+        self.assertEqual(coverage["suppressed_by_gate_count"], 1)
+        self.assertEqual(
+            coverage["suppressed_by_gate_reasons"],
+            {"same_sentence_without_answer_cue": 1},
+        )
+
+    def test_qa_coverage_ratio_is_zero_without_interrogatives(self) -> None:
+        """Coverage ratio should avoid division by zero."""
+
+        session = self._build_session(
+            texts=[
+                "Marker alpha remains stable in the fixture.",
+                "Response beta follows as a declarative statement.",
+            ],
+            segment_text_indexes=[[0, 1]],
+        )
+
+        candidates = self._build_extractor().extract(session)
+
+        self.assertEqual(candidates, [])
+        coverage = session.metadata["qa_coverage"]
+        self.assertEqual(coverage["interrogative_sentence_count"], 0)
+        self.assertEqual(coverage["emitted_candidate_count"], 0)
+        self.assertEqual(coverage["coverage_ratio"], 0)
+        self.assertEqual(coverage["suppressed_by_gate_count"], 0)
+
     def test_quality_local_rejects_weak_monologue_continuation(self) -> None:
         """Adjacent same-speaker continuation should not pass as an answer."""
 
@@ -2119,6 +2345,229 @@ class QAPairExtractorTests(unittest.TestCase):
 
         self.assertEqual(len(candidates), 1)
         self.assertIn("deduplicated_near_duplicate", candidates[0].review_flags)
+
+    def test_deduplicates_adjacent_echo_question_answer_pairs(self) -> None:
+        """A question echoing the previous answer should not create a second QA."""
+
+        session = self._build_session(
+            texts=[
+                "What does marker alpha produce?",
+                "Marker alpha produces response beta after stable transition.",
+                "Response beta after stable transition?",
+                "It produces response beta after stable transition.",
+            ],
+            segment_text_indexes=[[0, 1, 2, 3]],
+        )
+
+        candidates = self._build_extractor(
+            qa_answer_search_strategy="local_rule_based",
+            qa_answer_ranking_strategy="rule_based",
+            min_qa_confidence=0.0,
+        ).extract(session)
+
+        self.assertEqual(len(candidates), 1)
+        self.assertIn("echo_pair_deduplicated", candidates[0].reason_codes)
+
+    def test_internal_checkin_inside_answer_span_is_trimmed(self) -> None:
+        """Short classroom check-ins inside an answer span should be removed."""
+
+        session = self._build_session(
+            texts=[
+                "How does response beta remain stable?",
+                "The answer has two parts.",
+                "Ci siamo, mi state vedendo.",
+                "Response beta remains stable because marker alpha controls the gain.",
+            ],
+            segment_text_indexes=[[0, 1, 2, 3]],
+        )
+
+        candidates = self._build_extractor(
+            pipeline_profile="quality_local",
+            qa_answer_search_strategy="local_rule_based",
+            qa_answer_ranking_strategy="rule_based",
+            answer_search_window_units=3,
+            max_answer_units=3,
+            min_qa_confidence=0.0,
+        ).extract(session)
+
+        self.assertEqual(len(candidates), 1)
+        candidate = candidates[0]
+        self.assertNotIn("mi state vedendo", candidate.answer_text or "")
+        self.assertIn("Response beta remains stable", candidate.answer_text or "")
+        self.assertIn("answer_internal_checkin_trimmed", candidate.reason_codes)
+
+    def test_deflection_course_meta_answer_is_penalized_and_gated(self) -> None:
+        """Short course-meta deflections without an anchor should not pass quality."""
+
+        session = self._build_session(
+            texts=[
+                "Why is marker alpha introduced?",
+                "It is not essential for this course.",
+            ],
+            segment_text_indexes=[[0, 1]],
+        )
+
+        diagnostic_candidate = self._build_extractor(
+            qa_answer_search_strategy="local_rule_based",
+            qa_answer_ranking_strategy="rule_based",
+            min_qa_confidence=0.0,
+        ).extract(session)[0]
+        self.assertIn("deflection_answer_penalty", diagnostic_candidate.reason_codes)
+        self.assertIn("deflection_answer", diagnostic_candidate.review_flags)
+
+        candidates = self._build_extractor(
+            pipeline_profile="quality_local",
+            qa_answer_search_strategy="local_rule_based",
+            qa_answer_ranking_strategy="rule_based",
+            min_qa_confidence=0.0,
+        ).extract(session)
+
+        self.assertEqual(candidates, [])
+        self.assertEqual(
+            session.metadata["qa_coverage"]["suppressed_by_gate_reasons"],
+            {"deflection_answer_penalty": 1},
+        )
+
+    def test_short_socratic_answer_is_not_echo_deduped_or_deflected(self) -> None:
+        """Brief Socratic completions should survive the new cleanup rules."""
+
+        session = self._build_session(
+            texts=[
+                "If the marker accumulates, what do we obtain? We obtain beta.",
+            ],
+            segment_text_indexes=[[0]],
+        )
+
+        candidates = self._build_extractor(
+            pipeline_profile="quality_local",
+            qa_answer_search_strategy="local_rule_based",
+            qa_answer_ranking_strategy="rule_based",
+            min_qa_confidence=0.0,
+        ).extract(session)
+
+        self.assertEqual(len(candidates), 1)
+        self.assertIn("socratic_short_answer_support", candidates[0].reason_codes)
+        self.assertNotIn("echo_pair_deduplicated", candidates[0].reason_codes)
+        self.assertNotIn("deflection_answer_penalty", candidates[0].reason_codes)
+
+    def test_speaker_rescue_answer_cap_keeps_last_complete_period(self) -> None:
+        """Rescue cleanup should cap long answers at a complete sentence."""
+
+        extractor = self._build_extractor(qa_speaker_rescue_answer_word_cap=12)
+        answer = (
+            "Marker alpha preserves response beta. "
+            "It keeps the stable transition visible. "
+            "This additional sentence exceeds the configured rescue cap."
+        )
+
+        bounded = extractor._speaker_rescue_answer_within_word_cap(answer)
+
+        self.assertEqual(
+            bounded,
+            (
+                "Marker alpha preserves response beta. "
+                "It keeps the stable transition visible."
+            ),
+        )
+
+    def test_speaker_rescue_answer_cap_falls_back_without_periods(self) -> None:
+        """Rescue cleanup should still honor the cap when ASR lacks periods."""
+
+        extractor = self._build_extractor(qa_speaker_rescue_answer_word_cap=6)
+        answer = "marker alpha keeps response beta visible through the longer example"
+
+        bounded = extractor._speaker_rescue_answer_within_word_cap(answer)
+
+        self.assertEqual(bounded, "marker alpha keeps response beta visible")
+
+    def test_speaker_rescue_answer_cap_uses_clause_boundary_without_periods(self) -> None:
+        """Rescue cleanup should not leave a suspended tail when clauses exist."""
+
+        extractor = self._build_extractor(qa_speaker_rescue_answer_word_cap=9)
+        answer = (
+            "marker alpha keeps response beta stable, "
+            "while the longer example continues beyond the cap"
+        )
+
+        bounded = extractor._speaker_rescue_answer_within_word_cap(answer)
+
+        self.assertEqual(bounded, "marker alpha keeps response beta stable")
+
+    def test_speaker_rescue_question_focus_keeps_complete_object_clause(self) -> None:
+        """Rescue question focus trimming should keep the object of the question."""
+
+        extractor = self._build_extractor()
+        candidate = QAPairCandidate(
+            qa_candidate_id="qa_test",
+            question_text=(
+                "Before the setup, what does marker alpha preserve "
+                "for response beta and then"
+            ),
+            answer_text="Marker alpha preserves response beta.",
+            metadata={
+                "question_debug": {
+                    "normalized_question_text": (
+                        "before the setup, what does marker alpha preserve "
+                        "for response beta and then"
+                    ),
+                },
+            },
+        )
+
+        focused = extractor._speaker_rescue_question_focus(candidate)
+
+        self.assertEqual(
+            focused,
+            "What does marker alpha preserve for response beta",
+        )
+
+    def test_echo_pair_dedupe_drops_question_that_echoes_other_answer(self) -> None:
+        """Echo dedupe should keep the original definition over the echo question."""
+
+        extractor = self._build_extractor()
+        definition = QAPairCandidate(
+            qa_candidate_id="qa_definition",
+            question_text="What is marker alpha?",
+            answer_text="Marker alpha is the stable boundary.",
+            confidence=0.62,
+            start_seconds=10.0,
+        )
+        echo_question = QAPairCandidate(
+            qa_candidate_id="qa_echo",
+            question_text="Marker alpha is the stable boundary?",
+            answer_text="Yes, marker alpha is the stable boundary.",
+            confidence=0.92,
+            start_seconds=12.0,
+            review_flags=["answer_poll_or_backchannel"],
+            reason_codes=["answer_poll_or_backchannel_penalty"],
+        )
+
+        deduped = extractor._dedupe_qa_candidates([definition, echo_question])
+
+        self.assertEqual([candidate.qa_candidate_id for candidate in deduped], ["qa_definition"])
+        self.assertIn("echo_pair_deduplicated", deduped[0].reason_codes)
+
+    def test_echo_pair_tie_break_prefers_lower_noise_then_confidence(self) -> None:
+        """Ambiguous echo pairs should prefer less noisy candidates first."""
+
+        extractor = self._build_extractor()
+        clean = QAPairCandidate(
+            qa_candidate_id="qa_clean",
+            question_text="What does marker alpha control?",
+            answer_text="Marker alpha controls response beta.",
+            confidence=0.60,
+        )
+        noisy = QAPairCandidate(
+            qa_candidate_id="qa_noisy",
+            question_text="What does marker alpha control?",
+            answer_text="Marker alpha controls response beta.",
+            confidence=0.95,
+            review_flags=["answer_poll_or_backchannel"],
+        )
+
+        winner = extractor._echo_pair_winner(clean, noisy)
+
+        self.assertIs(winner, clean)
 
     def test_deferred_search_ignores_only_weak_keyword_recurrence(self) -> None:
         """Distant answers need more than generic question/answer words."""
@@ -2297,6 +2746,135 @@ class QAPairExtractorTests(unittest.TestCase):
         self.assertEqual(
             candidate.metadata["answer_debug"]["ranking_debug"]["semantic_reranking_status"],
             "fallback",
+        )
+
+    def test_semantic_responsiveness_scores_extracted_candidates_only(self) -> None:
+        """Optional semantic responsiveness should annotate emitted candidates."""
+
+        answer_text = "Tides happen because the moon pulls on ocean water."
+        session = self._build_session(
+            texts=[
+                "Why do tides happen?",
+                answer_text,
+            ],
+            segment_text_indexes=[[0, 1]],
+        )
+        backend = self._FakeSemanticResponsivenessBackend(
+            {
+                answer_text: SemanticResponsivenessScore(
+                    candidate_index=0,
+                    score=0.84,
+                    question_answer_similarity=0.81,
+                    answer_continuation_similarity=None,
+                    elapsed_seconds=0.002,
+                ),
+            },
+        )
+
+        candidate = self._build_extractor(
+            qa_semantic_responsiveness_enabled=True,
+            semantic_responsiveness_backend=backend,
+        ).extract(session)[0]
+
+        quality_features = candidate.metadata["quality_features"]
+        self.assertEqual(
+            quality_features["semantic_responsiveness_status"],
+            "applied",
+        )
+        self.assertEqual(
+            quality_features["semantic_responsiveness_score"],
+            0.84,
+        )
+        self.assertEqual(
+            session.metadata["qa_semantic_responsiveness"]["status"],
+            "applied",
+        )
+        self.assertEqual(
+            session.metadata["qa_semantic_responsiveness"]["scored_candidate_count"],
+            1,
+        )
+        self.assertEqual(
+            session.metadata["qa_semantic_responsiveness"]["model_footprint_bytes"],
+            12_345_678,
+        )
+
+    def test_semantic_responsiveness_gate_can_penalize_nonresponsive_answer(self) -> None:
+        """A configured semantic gate should suppress weak responsive evidence."""
+
+        answer_text = "The shoreline topic continues with a historical aside."
+        session = self._build_session(
+            texts=[
+                "Why do tides happen?",
+                answer_text,
+            ],
+            segment_text_indexes=[[0, 1]],
+        )
+        backend = self._FakeSemanticResponsivenessBackend(
+            {
+                answer_text: SemanticResponsivenessScore(
+                    candidate_index=0,
+                    score=0.21,
+                    question_answer_similarity=0.19,
+                    answer_continuation_similarity=0.42,
+                    continuation_penalty=0.22,
+                    elapsed_seconds=0.002,
+                ),
+            },
+        )
+
+        candidates = self._build_extractor(
+            pipeline_profile="quality_local",
+            qa_semantic_responsiveness_enabled=True,
+            qa_semantic_responsiveness_gate_enabled=True,
+            qa_semantic_responsiveness_gate_min_score=0.45,
+            qa_semantic_responsiveness_gate_penalty=0.30,
+            min_qa_confidence=0.0,
+            semantic_responsiveness_backend=backend,
+        ).extract(session)
+
+        self.assertEqual(candidates, [])
+        self.assertEqual(
+            session.metadata["qa_coverage"]["suppressed_by_gate_reasons"],
+            {"semantic_nonresponsive": 1},
+        )
+        self.assertEqual(
+            session.metadata["qa_semantic_responsiveness"][
+                "gate_penalized_candidate_count"
+            ],
+            1,
+        )
+
+    def test_semantic_responsiveness_falls_back_when_model_missing(self) -> None:
+        """Missing local model should fall back to off without changing extraction."""
+
+        session = self._build_session(
+            texts=[
+                "What is a graph?",
+                "A graph is a set of nodes and edges.",
+            ],
+            segment_text_indexes=[[0, 1]],
+        )
+
+        candidate = self._build_extractor(
+            qa_semantic_responsiveness_enabled=True,
+            semantic_responsiveness_backend=(
+                self._UnavailableSemanticResponsivenessBackend()
+            ),
+        ).extract(session)[0]
+
+        quality_features = candidate.metadata["quality_features"]
+        self.assertEqual(
+            quality_features["semantic_responsiveness_status"],
+            "fallback",
+        )
+        self.assertIsNone(quality_features["semantic_responsiveness_score"])
+        self.assertEqual(
+            session.metadata["qa_semantic_responsiveness"]["status"],
+            "fallback",
+        )
+        self.assertIn(
+            "model missing",
+            session.metadata["qa_semantic_responsiveness"]["fallback_reason"],
         )
 
     def test_keeps_uncertain_speaker_cases_extractable(self) -> None:
@@ -2566,6 +3144,419 @@ class QAPairExtractorTests(unittest.TestCase):
 
         self.assertEqual(candidates, [])
 
+    def test_quality_local_recovers_question_without_terminal_mark(self) -> None:
+        """A structurally clear question missing '?' should be recovered locally."""
+
+        session = self._build_session(
+            texts=[
+                "Can you explain how marker alpha reaches response beta",
+                "Marker alpha reaches response beta through stable transition gamma.",
+            ],
+            segment_text_indexes=[[0, 1]],
+        )
+
+        candidates = self._build_extractor(
+            pipeline_profile="quality_local",
+            qa_answer_search_strategy="local_rule_based",
+            qa_answer_ranking_strategy="rule_based",
+            min_qa_confidence=0.0,
+        ).extract(session)
+
+        self.assertEqual(len(candidates), 1)
+        candidate = candidates[0]
+        self.assertEqual(
+            candidate.question_text,
+            "Can you explain how marker alpha reaches response beta",
+        )
+        self.assertIn("response beta", candidate.answer_text or "")
+        self.assertIn(
+            "question_without_terminal_mark_recovered",
+            candidate.reason_codes,
+        )
+
+    def test_quality_local_rejects_true_declarative_without_terminal_mark(self) -> None:
+        """A true declarative sentence should not be promoted to a question."""
+
+        session = self._build_session(
+            texts=[
+                "Marker alpha reaches response beta through stable transition gamma.",
+                "Response beta remains stable after the transition.",
+            ],
+            segment_text_indexes=[[0, 1]],
+        )
+
+        candidates = self._build_extractor(
+            pipeline_profile="quality_local",
+            qa_answer_search_strategy="local_rule_based",
+            qa_answer_ranking_strategy="rule_based",
+            min_qa_confidence=0.0,
+        ).extract(session)
+
+        self.assertEqual(candidates, [])
+
+    def test_quality_local_recomposes_split_question_with_focus_last(self) -> None:
+        """A setup sentence plus a question focus should become one question span."""
+
+        session = self._build_session(
+            texts=[
+                "Marker alpha has an initial setup for the response.",
+                "How does marker alpha reach response beta?",
+                "Marker alpha reaches response beta through stable transition gamma.",
+            ],
+            speaker_ids=["speaker_a", "speaker_a", "speaker_b"],
+            segment_text_indexes=[[0, 1, 2]],
+        )
+
+        candidates = self._build_extractor(
+            pipeline_profile="quality_local",
+            qa_answer_search_strategy="local_rule_based",
+            qa_answer_ranking_strategy="rule_based",
+            min_qa_confidence=0.0,
+        ).extract(session)
+
+        self.assertEqual(len(candidates), 1)
+        candidate = candidates[0]
+        self.assertTrue(candidate.question_text.startswith("Marker alpha has"))
+        self.assertTrue(candidate.question_text.endswith("response beta?"))
+        self.assertEqual(
+            candidate.metadata["question_debug"]["normalized_question_text"],
+            "how does marker alpha reach response beta?",
+        )
+        self.assertEqual(
+            candidate.question_sentence_ids,
+            ["sentence_0001", "sentence_0002"],
+        )
+        self.assertIn("split_question_recomposed", candidate.reason_codes)
+
+    def test_quality_local_rejects_split_setup_without_focus(self) -> None:
+        """Adjacent setup sentences without question focus should not be recomposed."""
+
+        session = self._build_session(
+            texts=[
+                "Marker alpha has an initial setup for the response.",
+                "The second setup extends the same turn.",
+                "Response beta remains stable after the transition.",
+            ],
+            segment_text_indexes=[[0, 1, 2]],
+        )
+
+        candidates = self._build_extractor(
+            pipeline_profile="quality_local",
+            qa_answer_search_strategy="local_rule_based",
+            qa_answer_ranking_strategy="rule_based",
+            min_qa_confidence=0.0,
+        ).extract(session)
+
+        self.assertEqual(candidates, [])
+
+    def test_quality_local_recovers_runon_question_with_local_answer(self) -> None:
+        """A long run-on question can bind to the immediately responsive answer."""
+
+        session = self._build_session(
+            texts=[
+                (
+                    "Before we settle the notation, and after the long setup for "
+                    "the example, what does marker alpha do for response beta?"
+                ),
+                "Marker alpha guides response beta through stable transition gamma.",
+            ],
+            segment_text_indexes=[[0, 1]],
+        )
+
+        candidates = self._build_extractor(
+            pipeline_profile="quality_local",
+            qa_answer_search_strategy="local_rule_based",
+            qa_answer_ranking_strategy="rule_based",
+            min_qa_confidence=0.0,
+        ).extract(session)
+
+        self.assertEqual(len(candidates), 1)
+        candidate = candidates[0]
+        self.assertEqual(
+            candidate.question_text,
+            "What does marker alpha do for response beta?",
+        )
+        self.assertIn("response beta", candidate.answer_text or "")
+        self.assertIn("runon_question_local_answer", candidate.reason_codes)
+
+    def test_quality_local_rejects_runon_question_with_nonresponsive_answer(self) -> None:
+        """A run-on question should not pass with a follow-up prompt as answer."""
+
+        session = self._build_session(
+            texts=[
+                (
+                    "Before we settle the notation, and after the long setup for "
+                    "the example, what does marker alpha do for response beta?"
+                ),
+                "Tell us how response beta should be introduced later.",
+            ],
+            segment_text_indexes=[[0, 1]],
+        )
+
+        candidates = self._build_extractor(
+            pipeline_profile="quality_local",
+            qa_answer_search_strategy="local_rule_based",
+            qa_answer_ranking_strategy="rule_based",
+            min_qa_confidence=0.0,
+        ).extract(session)
+
+        self.assertEqual(candidates, [])
+
+    def test_quality_local_tightening_rejects_non_head_missing_terminal(self) -> None:
+        """A mid-sentence cue should not recover a declarative as a question."""
+
+        session = self._build_session(
+            texts=[
+                "Marker alpha explains what response beta means in the abstract fixture.",
+                "Response beta stays stable after marker alpha.",
+            ],
+            segment_text_indexes=[[0, 1]],
+        )
+
+        candidates = self._build_extractor(
+            pipeline_profile="quality_local",
+            qa_answer_search_strategy="local_rule_based",
+            qa_answer_ranking_strategy="rule_based",
+            min_qa_confidence=0.0,
+        ).extract(session)
+
+        self.assertEqual(candidates, [])
+
+    def test_quality_local_skips_interrogative_continuation_answer(self) -> None:
+        """An unmarked interrogative continuation should not be used as answer."""
+
+        session = self._build_session(
+            texts=[
+                "Which marker path does marker alpha choose?",
+                "That is, which marker path does marker alpha choose for response beta",
+                "Marker alpha chooses response beta after stable transition gamma.",
+            ],
+            speaker_ids=["speaker_a", "speaker_a", "speaker_b"],
+            segment_text_indexes=[[0, 1, 2]],
+        )
+
+        candidates = self._build_extractor(
+            pipeline_profile="quality_local",
+            qa_answer_search_strategy="local_rule_based",
+            qa_answer_ranking_strategy="rule_based",
+            answer_search_window_units=3,
+            min_qa_confidence=0.0,
+        ).extract(session)
+
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(candidates[0].answer_sentence_ids, ["sentence_0003"])
+        self.assertIn(
+            "answer_question_continuation_rejected",
+            candidates[0].reason_codes,
+        )
+        self.assertNotIn("That is", candidates[0].answer_text or "")
+
+    def test_quality_local_marks_additive_same_speaker_answer_penalty(self) -> None:
+        """Adjacent same-speaker additive starts should be penalized, not rejected."""
+
+        session = self._build_session(
+            texts=[
+                "What does marker alpha change?",
+                "Also marker alpha changes response beta after the step.",
+            ],
+            speaker_ids=["speaker_a", "speaker_a"],
+            segment_text_indexes=[[0, 1]],
+        )
+
+        candidates = self._build_extractor(
+            pipeline_profile="quality_local",
+            qa_answer_search_strategy="local_rule_based",
+            qa_answer_ranking_strategy="rule_based",
+            min_qa_confidence=0.0,
+        ).extract(session)
+
+        self.assertEqual(len(candidates), 1)
+        self.assertIn(
+            "additive_continuation_answer_penalty",
+            candidates[0].reason_codes,
+        )
+
+    def test_quality_local_penalizes_mid_sentence_question_span(self) -> None:
+        """A question focus cut out of a larger sentence should be marked."""
+
+        session = self._build_session(
+            texts=[
+                (
+                    "Before the setup has reached a sentence boundary, "
+                    "what does marker alpha control?"
+                ),
+                "Marker alpha controls response beta through stable transition gamma.",
+            ],
+            segment_text_indexes=[[0, 1]],
+        )
+
+        candidates = self._build_extractor(
+            pipeline_profile="quality_local",
+            qa_answer_search_strategy="local_rule_based",
+            qa_answer_ranking_strategy="rule_based",
+            min_qa_confidence=0.0,
+        ).extract(session)
+
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(
+            candidates[0].question_text,
+            "What does marker alpha control?",
+        )
+        self.assertIn("question_span_integrity_penalty", candidates[0].reason_codes)
+
+    def test_quality_local_keeps_terminal_question_with_responsive_local_answer(self) -> None:
+        """A terminal interview-style question should survive span-integrity risk."""
+
+        session = self._build_session(
+            texts=[
+                (
+                    "Before the interview opens, "
+                    "what does marker alpha support?"
+                ),
+                "Marker alpha supports response beta through stable transition gamma.",
+            ],
+            speaker_ids=["speaker_a", "speaker_b"],
+            segment_text_indexes=[[0, 1]],
+        )
+
+        candidates = self._build_extractor(
+            pipeline_profile="quality_local",
+            qa_answer_search_strategy="local_rule_based",
+            qa_answer_ranking_strategy="rule_based",
+            min_qa_confidence=0.0,
+        ).extract(session)
+
+        self.assertEqual(len(candidates), 1)
+        candidate = candidates[0]
+        self.assertEqual(candidate.question_text, "What does marker alpha support?")
+        self.assertEqual(candidate.answer_sentence_ids, ["sentence_0002"])
+        self.assertIn("question_span_integrity_penalty", candidate.reason_codes)
+        self.assertIn("answer_in_next_sentence", candidate.reason_codes)
+        self.assertNotEqual(
+            session.metadata["qa_coverage"]["suppressed_by_gate_reasons"].get(
+                "question_span_integrity",
+            ),
+            1,
+        )
+
+    def test_quality_local_completes_answer_cut_at_search_window(self) -> None:
+        """A non-terminal answer at the local window edge can extend by one unit."""
+
+        session = self._build_session(
+            texts=[
+                "What does marker alpha control?",
+                "Marker alpha controls response beta",
+                "because response beta remains stable after the transition.",
+            ],
+            segment_text_indexes=[[0, 1, 2]],
+        )
+
+        candidates = self._build_extractor(
+            pipeline_profile="quality_local",
+            qa_answer_search_strategy="local_rule_based",
+            qa_answer_ranking_strategy="rule_based",
+            answer_search_window_units=1,
+            min_qa_confidence=0.0,
+        ).extract(session)
+
+        self.assertEqual(len(candidates), 1)
+        candidate = candidates[0]
+        self.assertEqual(
+            candidate.answer_sentence_ids,
+            ["sentence_0002", "sentence_0003"],
+        )
+        self.assertIn("answer_span_completion_support", candidate.reason_codes)
+
+    def test_quality_local_penalizes_answer_truncated_at_boundary(self) -> None:
+        """A non-terminal answer with no continuation should be marked risky."""
+
+        session = self._build_session(
+            texts=[
+                "What does marker alpha control?",
+                "Marker alpha controls response beta",
+            ],
+            segment_text_indexes=[[0, 1]],
+        )
+
+        candidates = self._build_extractor(
+            pipeline_profile="quality_local",
+            qa_answer_search_strategy="local_rule_based",
+            qa_answer_ranking_strategy="rule_based",
+            answer_search_window_units=1,
+            min_qa_confidence=0.0,
+        ).extract(session)
+
+        self.assertEqual(len(candidates), 1)
+        self.assertIn(
+            "answer_truncated_at_boundary_penalty",
+            candidates[0].reason_codes,
+        )
+        self.assertIn("answer_truncated_at_boundary", candidates[0].review_flags)
+
+    def test_quality_local_rejects_isolated_tag_question(self) -> None:
+        """A bare confirmation tag should not become an autonomous question."""
+
+        session = self._build_session(
+            texts=[
+                "Right?",
+                "Marker alpha remains stable after the transition.",
+            ],
+            segment_text_indexes=[[0, 1]],
+        )
+
+        candidates = self._build_extractor(
+            pipeline_profile="quality_local",
+            qa_answer_search_strategy="local_rule_based",
+            qa_answer_ranking_strategy="rule_based",
+            min_qa_confidence=0.0,
+        ).extract(session)
+
+        self.assertEqual(candidates, [])
+
+    def test_quality_local_rejects_poll_backchannel_answer_span(self) -> None:
+        """Poll votes and repeated backchannels should not be answers."""
+
+        session = self._build_session(
+            texts=[
+                "Which option has stable support?",
+                "One two three.",
+            ],
+            segment_text_indexes=[[0, 1]],
+        )
+
+        candidates = self._build_extractor(
+            pipeline_profile="quality_local",
+            qa_answer_search_strategy="local_rule_based",
+            qa_answer_ranking_strategy="rule_based",
+            min_qa_confidence=0.0,
+        ).extract(session)
+
+        self.assertEqual(candidates, [])
+
+    def test_quality_local_keeps_short_legitimate_completion_answer(self) -> None:
+        """A short lexical answer should not be treated as backchannel noise."""
+
+        session = self._build_session(
+            texts=[
+                "What does marker alpha complete?",
+                "Marker alpha completes beta.",
+            ],
+            segment_text_indexes=[[0, 1]],
+        )
+
+        candidates = self._build_extractor(
+            pipeline_profile="quality_local",
+            qa_answer_search_strategy="local_rule_based",
+            qa_answer_ranking_strategy="rule_based",
+            min_qa_confidence=0.0,
+        ).extract(session)
+
+        self.assertEqual(len(candidates), 1)
+        self.assertNotIn(
+            "answer_poll_or_backchannel_penalty",
+            candidates[0].reason_codes,
+        )
+
     def test_falls_back_to_merged_transcript_when_sentences_are_missing(self) -> None:
         """Merged transcript should remain an explicit fallback path."""
 
@@ -2612,6 +3603,7 @@ class QAPairExtractorTests(unittest.TestCase):
         *,
         semantic_retriever_backend: object | None = None,
         semantic_reranker_backend: object | None = None,
+        semantic_responsiveness_backend: object | None = None,
         **config_overrides: object,
     ) -> QAPairExtractor:
         """Create an extractor with deterministic QA-oriented defaults."""
@@ -2620,6 +3612,7 @@ class QAPairExtractorTests(unittest.TestCase):
             self._build_config(**config_overrides),
             semantic_retriever_backend=semantic_retriever_backend,
             semantic_reranker_backend=semantic_reranker_backend,
+            semantic_responsiveness_backend=semantic_responsiveness_backend,
         )
 
     @staticmethod

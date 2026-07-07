@@ -126,7 +126,8 @@ Pipeline profiles are opt-in presets for optional branches:
 - `current`: default; preserves the existing behavior
 - `light`: disables heavier optional branches for fast local checks
 - `quality`: enables alignment plus semantic QA without diarization
-- `quality_local`: enables alignment plus guarded local QA without diarization
+- `quality_local`: recommended default for lectures; alignment plus guarded
+  local QA, speaker check, and speaker-assisted rescue, without diarization
 - `full`: enables the heavier quality-oriented optional branches
 - `diagnostic`: enables comparison/debug-oriented branches
 
@@ -155,6 +156,33 @@ filter low-information classroom check-ins, numeric polls, fragment questions,
 question-like answers, same-sentence echoes, weak distant deferred answers,
 low-autonomy question fragments, thin context, weak answer responsiveness, and
 same-speaker/self-continuation risks.
+
+## Speaker check and speaker-assisted rescue
+
+`quality_local` includes a validated speaker-change check: question and answer
+audio spans are compared with local ECAPA speaker embeddings (SpeechBrain).
+Same-voice answers to non-socratic questions receive a graduated confidence
+penalty; confidently different voices can rescue genuine interview exchanges
+that soft quality gates would otherwise suppress.
+
+The check activates automatically when the local model directory exists:
+
+```bash
+pip install speechbrain
+python -c "from speechbrain.inference.speaker import EncoderClassifier; EncoderClassifier.from_hparams(source='speechbrain/spkrec-ecapa-voxceleb', savedir='local_models/spkrec-ecapa-voxceleb')"
+```
+
+One-time download (~80 MB); afterwards everything runs offline. Without the
+model the pipeline falls back transparently (no penalty, no rescue) and notes
+it in the run metrics. Runtime cost: ~2s model load per process plus
+milliseconds per candidate. Overlapping spans (intra-sentence socratic pairs)
+are excluded from the check; too-short question spans are extended audio-only
+within the containing utterance.
+
+An optional semantic responsiveness scorer (sentence-transformers) exists but
+is OFF by default: on benchmark content it penalized short correct answers and
+its per-run model load cost is high. It remains available as an opt-in
+diagnostic via `--enable-qa-semantic-responsiveness`.
 
 Compare saved local evaluation runs for one input:
 
@@ -210,14 +238,29 @@ experimental:
 
 - root `main.py` compatibility wrapper
 - Docker and Docker Compose integration
-- diarization
-- semantic QA retrieval and reranking
+- diarization (full-transcript; the span-level speaker check is stable)
+- semantic QA retrieval, reranking, and the opt-in responsiveness scorer
 - debug Excel export
 - adaptive, windowed, and `both` segmentation modes
 - text-only transcription cache fallback
 - `disable-alignment` compatibility mode
 - `src/lecture_analyzer/analysis/speaker_role.py`, which remains a placeholder
   unless integrated
+
+## Prototype status (2026-07-05)
+
+The extraction prototype is feature-complete and frozen. Final benchmark over
+7 inputs (external AI review, keep/revise/reject per candidate): 46 emitted
+candidates, 52% keep, 30% revise, 17% reject; reference university lecture at
+86% keep with zero rejects; pure monologue input correctly yields zero
+candidates. Development history and per-cycle decisions are recorded in
+`PROJECT_DIARY.md`; the final quality snapshot lives in
+`evaluations/benchmark_overview_2026-07-03.md` (local, not committed).
+
+Known limits (documented, out of prototype scope): multi-speaker panels need
+full diarization; interview recall is real but low in absolute terms;
+residual semantic non-responsiveness cases; deictic blackboard-dependent
+answers. See `docs/prototype_closure_report.md` for the closure report.
 
 ## Local materials and generated artifacts
 
@@ -245,7 +288,8 @@ Depending on enabled branches, the real pipeline may also require:
 - `pyannote.audio` for diarization
 - `wtpsplit` for the quality sentence splitter; quality runs fail clearly if it is requested but unavailable
 - `openpyxl` for debug Excel export
-- semantic-model dependencies for semantic QA branches
+- `speechbrain` + local ECAPA model for the speaker check and rescue
+- `sentence-transformers` for the opt-in semantic responsiveness scorer
 
 ## Repository structure
 

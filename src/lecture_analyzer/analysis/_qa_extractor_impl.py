@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass, field
+from pathlib import Path
 import re
+from tempfile import TemporaryDirectory
+from time import perf_counter
 from typing import Any, Iterable, Protocol, Sequence
 
 from lecture_analyzer.analysis.qa_rules import (
@@ -25,6 +29,22 @@ from lecture_analyzer.analysis.semantic_reranking import (
     SemanticRerankerBackend,
     SemanticRerankingUnavailableError,
     TransformersBGERerankerBackend,
+)
+from lecture_analyzer.analysis.semantic_responsiveness import (
+    SemanticResponsivenessBackend,
+    SemanticResponsivenessInput,
+    SemanticResponsivenessUnavailableError,
+    SentenceTransformerResponsivenessBackend,
+)
+from lecture_analyzer.analysis.qa_speaker_check import (
+    DIFFERENT_SPEAKER_LIKELY,
+    SAME_SPEAKER_SUSPECTED,
+    SPEAKER_CHECK_UNAVAILABLE,
+    SPEAKER_RESCUED_CANDIDATE,
+    SPEAKER_RESCUE_REJECTED_CONVERSATIONAL,
+    SPEAKER_RESCUE_REJECTED_TEXT_QUALITY,
+    QASpeakerCheckService,
+    _apply_result_to_candidate,
 )
 from lecture_analyzer.core.config import PipelineConfig
 from lecture_analyzer.core.models import (
@@ -91,6 +111,14 @@ _QUESTION_STOPWORDS = {
     "quante",
     "quanti",
     "quanto",
+    "quella",
+    "quelle",
+    "quelli",
+    "quello",
+    "questa",
+    "queste",
+    "questi",
+    "questo",
     "right",
     "se",
     "si",
@@ -269,6 +297,13 @@ _INCOMPLETE_ANSWER_END_WORDS = {
 _INCOMPLETE_ANSWER_START_RE = re.compile(
     r"^(?:not\s+only|non\s+soltanto|if|se|when|quando)\b",
 )
+_ADDITIVE_CONTINUATION_START_RE = re.compile(
+    r"^(?:"
+    r"also|and\s+also|plus|moreover|furthermore|additionally|then|"
+    r"anche|e\s+anche|ed\s+anche|inoltre|poi|"
+    r"mettendo|mettendoci|aggiungendo|facendo|usando|portando"
+    r")\b",
+)
 _BACKCHANNEL_CHECK_RE = re.compile(
     r"\b(?:"
     r"ci\s+siamo|mi\s+state\s+(?:vedendo|sentendo|seguendo)|"
@@ -276,6 +311,39 @@ _BACKCHANNEL_CHECK_RE = re.compile(
     r"can\s+you\s+(?:see|hear|follow)"
     r")\b",
 )
+_DEFLECTION_META_TOKENS = {
+    "course",
+    "corso",
+    "class",
+    "classe",
+    "lesson",
+    "lecture",
+    "lezione",
+    "lezioni",
+    "module",
+    "modulo",
+    "slide",
+    "slides",
+    "exam",
+    "esame",
+    "today",
+    "oggi",
+}
+_DEFLECTION_DISMISSIVE_TOKENS = {
+    "essential",
+    "essenziale",
+    "essenzialissimo",
+    "important",
+    "importante",
+    "necessary",
+    "necessario",
+    "needed",
+    "serve",
+    "servono",
+    "relevant",
+    "rilevante",
+}
+_NEGATION_TOKENS = {"no", "non", "not", "n't", "never", "mai"}
 _PROCEDURAL_QUESTION_RE = re.compile(
     r"\b(?:"
     r"ask\s+(?:[a-z]+\s+){0,4}(?:a\s+)?question|"
@@ -287,6 +355,12 @@ _FOLLOWUP_PROMPT_ANSWER_RE = re.compile(
     r"(?:tell|explain|describe|show|walk)\s+(?:me|us)\b"
     r"|(?:can|could|would)\s+you\s+(?:tell|explain|describe|show)\b"
     r"|(?:racconta|raccontaci|raccontami|spiega|spiegaci|spiegami|dicci|dimmi)\b"
+    r")",
+)
+_DIRECT_DEFINITION_REQUEST_RE = re.compile(
+    r"^(?:"
+    r"(?:can|could|would)\s+you\s+(?:tell|explain|describe|show)\b"
+    r"|(?:puoi|potresti|puo|può)\s+(?:spiegare|spiegarci|spiegarmi|dire|dirci)\b"
     r")",
 )
 _POLL_OPTION_WORDS = {
@@ -306,6 +380,26 @@ _POLL_OPTION_WORDS = {
     "tre",
     "quattro",
     "cinque",
+}
+_BACKCHANNEL_ANSWER_TOKENS = {
+    "ah",
+    "eh",
+    "hm",
+    "hmm",
+    "no",
+    "bene",
+    "bon",
+    "ok",
+    "okay",
+    "right",
+    "si",
+    "sì",
+    "uh",
+    "uhm",
+    "vero",
+    "via",
+    "yeah",
+    "yes",
 }
 _FILLER_ANSWERS = {
     "another aside entirely",
@@ -507,6 +601,7 @@ class _LocalRuleBasedAnswerSearcher:
             candidates.append(same_unit_answer)
 
         collected_units: list[_ExtractionUnit] = []
+        skipped_question_continuation_answer = False
         for distance_units in range(
             1,
             self._extractor.config.answer_search_window_units + 1,
@@ -516,6 +611,12 @@ class _LocalRuleBasedAnswerSearcher:
                 break
 
             if candidate_index in question_by_index:
+                if self._extractor._is_answer_question_continuation_rejected(
+                    question=question, answer_text=units[candidate_index].text
+                ):
+                    skipped_question_continuation_answer = True
+                    search_stop_reason = "question_continuation_skipped"
+                    continue
                 leading_answer = self._extractor._build_competing_question_leading_answer_candidate(
                     question=question,
                     competing_unit=units[candidate_index],
@@ -562,6 +663,13 @@ class _LocalRuleBasedAnswerSearcher:
                 search_stop_reason = "temporal_gap_limit"
                 break
 
+            if self._extractor._is_answer_question_continuation_rejected(
+                question=question, answer_text=candidate_unit.text
+            ):
+                skipped_question_continuation_answer = True
+                search_stop_reason = "question_continuation_skipped"
+                continue
+
             prospective_units = collected_units + [candidate_unit]
             if len(prospective_units) > self._extractor.config.max_answer_units:
                 search_stop_reason = "answer_span_limit"
@@ -588,7 +696,39 @@ class _LocalRuleBasedAnswerSearcher:
                 segment_lookup=segment_lookup,
             )
             if answer_candidate is not None:
+                self._extractor._annotate_answer_boundary(
+                    answer=answer_candidate,
+                    question=question,
+                    units=units,
+                    question_by_index=question_by_index,
+                    segment_lookup=segment_lookup,
+                    at_search_window_boundary=(
+                        distance_units
+                        >= self._extractor.config.answer_search_window_units
+                    ),
+                )
+                if skipped_question_continuation_answer:
+                    answer_candidate.reason_codes = self._extractor._unique_strings(
+                        list(answer_candidate.reason_codes)
+                        + ["answer_question_continuation_rejected"]
+                    )
+                    answer_candidate.search_signals[
+                        "skipped_question_continuation_answer"
+                    ] = True
                 candidates.append(answer_candidate)
+                if distance_units >= self._extractor.config.answer_search_window_units:
+                    completion_candidate = (
+                        self._extractor._build_answer_completion_candidate(
+                            question=question,
+                            answer_units=collected_units,
+                            units=units,
+                            question_by_index=question_by_index,
+                            distance_units=distance_units,
+                            segment_lookup=segment_lookup,
+                        )
+                    )
+                    if completion_candidate is not None:
+                        candidates.append(completion_candidate)
 
         return _AnswerSearchResult(
             strategy_name=self.strategy_name,
@@ -839,6 +979,14 @@ class _SemanticAnswerSearcher:
                 )
                 if candidate is None:
                     continue
+                self._extractor._annotate_answer_boundary(
+                    answer=candidate,
+                    question=question,
+                    units=units,
+                    question_by_index=question_by_index,
+                    segment_lookup=segment_lookup,
+                    at_search_window_boundary=False,
+                )
                 candidate.search_signals.update(
                     {
                         "candidate_channel": "semantic_retrieval",
@@ -994,6 +1142,11 @@ class _RuleBasedAnswerRanker:
                 -candidate.answer_score,
                 candidate.distance_units,
                 candidate.gap_seconds,
+                (
+                    0
+                    if "answer_span_completion_support" in candidate.reason_codes
+                    else 1
+                ),
                 len(candidate.answer_units),
             ),
         )
@@ -1197,8 +1350,17 @@ class QAPairExtractor:
         answer_ranking_strategy: AnswerRankingStrategy | None = None,
         semantic_retriever_backend: SemanticRetrieverBackend | None = None,
         semantic_reranker_backend: SemanticRerankerBackend | None = None,
+        semantic_responsiveness_backend: SemanticResponsivenessBackend | None = None,
+        qa_speaker_check_service: QASpeakerCheckService | None = None,
     ) -> None:
         self.config = config or PipelineConfig()
+        self.qa_speaker_check_service = qa_speaker_check_service
+        self.semantic_responsiveness_backend = (
+            semantic_responsiveness_backend
+            or SentenceTransformerResponsivenessBackend(
+                self.config.qa_semantic_responsiveness_model_name,
+            )
+        )
         self.local_answer_search_strategy = _LocalRuleBasedAnswerSearcher(self)
         self.local_answer_ranking_strategy = _RuleBasedAnswerRanker(self)
         if answer_search_strategy is not None:
@@ -1226,10 +1388,20 @@ class QAPairExtractor:
         """Extract QA candidates using sentences as the primary QA layer."""
 
         if not self.config.enable_qa_extraction:
+            session.metadata["qa_coverage"] = self._build_qa_coverage(
+                units=[],
+                emitted_candidate_count=0,
+                suppressed_by_gate_reason_counts={},
+            )
             return []
 
         prepared_input = self._prepare_input(session)
         if not prepared_input.units:
+            session.metadata["qa_coverage"] = self._build_qa_coverage(
+                units=[],
+                emitted_candidate_count=0,
+                suppressed_by_gate_reason_counts={},
+            )
             return []
 
         segment_lookup = self._build_segment_lookup(session.segments)
@@ -1240,7 +1412,7 @@ class QAPairExtractor:
         )
         question_by_index = {question.unit_index: question for question in questions}
 
-        qa_candidates: list[QAPairCandidate] = []
+        extracted_candidates: list[QAPairCandidate] = []
         for ordinal, question in enumerate(questions, start=1):
             search_result = self.answer_search_strategy.generate_candidates(
                 question=question,
@@ -1277,13 +1449,1323 @@ class QAPairExtractor:
                 utterance_by_id=prepared_input.utterance_by_id,
                 segment_lookup=segment_lookup,
             )
-            if (
-                qa_candidate.confidence >= self.config.min_qa_confidence
-                and self._should_emit_qa_candidate(qa_candidate)
-            ):
-                qa_candidates.append(qa_candidate)
+            extracted_candidates.append(qa_candidate)
 
-        return self._dedupe_qa_candidates(qa_candidates)
+        self._apply_semantic_responsiveness_scoring(
+            candidates=extracted_candidates,
+            session=session,
+        )
+
+        qa_candidates: list[QAPairCandidate] = []
+        suppressed_candidates: list[tuple[QAPairCandidate, str]] = []
+        suppressed_by_gate_reason_counts: dict[str, int] = {}
+        for qa_candidate in extracted_candidates:
+            suppression_reason = self._qa_candidate_suppression_reason(qa_candidate)
+            if suppression_reason is None:
+                qa_candidates.append(qa_candidate)
+            else:
+                suppressed_candidates.append((qa_candidate, suppression_reason))
+                suppressed_by_gate_reason_counts[suppression_reason] = (
+                    suppressed_by_gate_reason_counts.get(suppression_reason, 0) + 1
+                )
+
+        emitted_candidates = self._dedupe_qa_candidates(qa_candidates)
+        rescue_stats = self._apply_speaker_assisted_rescue(
+            session=session,
+            suppressed_candidates=suppressed_candidates,
+            emitted_candidates=emitted_candidates,
+            suppressed_by_gate_reason_counts=suppressed_by_gate_reason_counts,
+        )
+        session.metadata["qa_coverage"] = self._build_qa_coverage(
+            units=prepared_input.units,
+            emitted_candidate_count=len(emitted_candidates),
+            suppressed_by_gate_reason_counts=suppressed_by_gate_reason_counts,
+            speaker_rescue_stats=rescue_stats,
+        )
+        return emitted_candidates
+
+    def _build_qa_coverage(
+        self,
+        *,
+        units: Sequence[_ExtractionUnit],
+        emitted_candidate_count: int,
+        suppressed_by_gate_reason_counts: dict[str, int],
+        speaker_rescue_stats: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Return aggregate QA coverage counters for run-level review."""
+
+        interrogative_sentence_count = sum(
+            1 for unit in units if self._is_interrogative_sentence_proxy(unit.text)
+        )
+        suppressed_by_gate_count = sum(suppressed_by_gate_reason_counts.values())
+        coverage = {
+            "interrogative_sentence_count": interrogative_sentence_count,
+            "emitted_candidate_count": emitted_candidate_count,
+            "coverage_ratio": (
+                round(emitted_candidate_count / interrogative_sentence_count, 4)
+                if interrogative_sentence_count
+                else 0
+            ),
+            "suppressed_by_gate_count": suppressed_by_gate_count,
+            "suppressed_by_gate_reasons": dict(
+                sorted(suppressed_by_gate_reason_counts.items()),
+            ),
+        }
+        if speaker_rescue_stats:
+            coverage.update(
+                {
+                    "rescued_candidate_count": int(
+                        speaker_rescue_stats.get("rescued_candidate_count") or 0,
+                    ),
+                    "rescued_by_gate_reasons": dict(
+                        sorted(
+                            (
+                                speaker_rescue_stats.get("rescued_by_gate_reasons")
+                                or {}
+                            ).items(),
+                        ),
+                    ),
+                    "speaker_rescue_checked_candidate_count": int(
+                        speaker_rescue_stats.get("checked_candidate_count") or 0,
+                    ),
+                    "speaker_rescue_attempted_candidate_count": int(
+                        speaker_rescue_stats.get("attempted_candidate_count") or 0,
+                    ),
+                    "speaker_rescue_unavailable_candidate_count": int(
+                        speaker_rescue_stats.get("unavailable_candidate_count") or 0,
+                    ),
+                    "speaker_rescue_skipped_candidate_count": int(
+                        speaker_rescue_stats.get("skipped_candidate_count") or 0,
+                    ),
+                    "speaker_rescue_rejected_candidate_count": int(
+                        speaker_rescue_stats.get("rejected_candidate_count") or 0,
+                    ),
+                    "speaker_rescue_rejected_reasons": dict(
+                        sorted(
+                            (
+                                speaker_rescue_stats.get("rejected_reason_counts")
+                                or {}
+                            ).items(),
+                        ),
+                    ),
+                    "speaker_rescue_total_check_seconds": round(
+                        float(speaker_rescue_stats.get("total_check_seconds") or 0.0),
+                        4,
+                    ),
+                    "speaker_rescue_check_cap_reached": bool(
+                        speaker_rescue_stats.get("check_cap_reached"),
+                    ),
+                    "speaker_rescue_candidate_cap_reached": bool(
+                        speaker_rescue_stats.get("candidate_cap_reached"),
+                    ),
+                },
+            )
+        return coverage
+
+    def _apply_speaker_assisted_rescue(
+        self,
+        *,
+        session: LectureSession,
+        suppressed_candidates: Sequence[tuple[QAPairCandidate, str]],
+        emitted_candidates: list[QAPairCandidate],
+        suppressed_by_gate_reason_counts: dict[str, int],
+    ) -> dict[str, Any]:
+        """Recover soft-gated dialogic candidates with confident speaker change."""
+
+        stats: dict[str, Any] = {
+            "enabled": False,
+            "model_available": False,
+            "attempted_candidate_count": 0,
+            "checked_candidate_count": 0,
+            "unavailable_candidate_count": 0,
+            "skipped_candidate_count": 0,
+            "rejected_candidate_count": 0,
+            "rejected_reason_counts": {},
+            "rescued_candidate_count": 0,
+            "rescued_by_gate_reasons": {},
+            "total_check_seconds": 0.0,
+            "check_cap_reached": False,
+            "candidate_cap_reached": False,
+            "notes": [],
+        }
+        session.metadata["qa_speaker_rescue"] = stats
+        if (
+            self.config.pipeline_profile != "quality_local"
+            or not self.config.qa_speaker_check_enabled
+            or not suppressed_candidates
+        ):
+            return stats
+
+        speaker_config = self.config.speaker_check_config()
+        max_checks = max(0, int(speaker_config.rescue_max_checks_per_run))
+        max_rescues = max(0, int(speaker_config.rescue_max_candidates_per_run))
+        if max_checks <= 0 or max_rescues <= 0:
+            stats["enabled"] = True
+            return stats
+
+        checker = self.qa_speaker_check_service or QASpeakerCheckService(speaker_config)
+        stats["enabled"] = True
+        stats["model_available"] = checker.model_available()
+        stats["model_load_seconds"] = round(checker.model_load_seconds, 4)
+        stats["notes"] = checker.notes()
+        if not stats["model_available"]:
+            return stats
+
+        audio_sources_by_id = {
+            audio_source.audio_source_id: audio_source
+            for audio_source in session.audio_sources
+        }
+        utterances_by_id = {
+            utterance.utterance_id: utterance
+            for utterance in session.utterances
+        }
+        sentence_by_id = {
+            sentence.sentence_id: sentence
+            for sentence in session.sentences
+        }
+        next_sentence_id_by_id = {
+            left.sentence_id: right.sentence_id
+            for left, right in zip(session.sentences, session.sentences[1:])
+        }
+        rescued_by_gate: Counter[str] = Counter()
+        rejected_reasons: Counter[str] = Counter()
+
+        with TemporaryDirectory(prefix="qa_speaker_rescue_") as temp_root:
+            temp_directory = Path(temp_root)
+            for candidate, suppression_reason in suppressed_candidates:
+                if stats["attempted_candidate_count"] >= max_checks:
+                    stats["check_cap_reached"] = True
+                    break
+                if stats["rescued_candidate_count"] >= max_rescues:
+                    stats["candidate_cap_reached"] = True
+                    break
+                if not self._speaker_rescue_candidate_is_eligible(
+                    candidate,
+                    suppression_reason,
+                ):
+                    continue
+
+                result = checker.check(
+                    candidate,
+                    audio_sources_by_id=audio_sources_by_id,
+                    utterances_by_id=utterances_by_id,
+                    temp_directory=temp_directory,
+                )
+                stats["attempted_candidate_count"] += 1
+                stats["total_check_seconds"] = (
+                    float(stats["total_check_seconds"]) + result.check_seconds
+                )
+                if result.status == "skipped":
+                    stats["skipped_candidate_count"] += 1
+                    continue
+                if result.status == "unavailable":
+                    stats["unavailable_candidate_count"] += 1
+                    continue
+                stats["checked_candidate_count"] += 1
+                duplicate_existing = (
+                    self._find_near_duplicate_candidate(
+                        candidate,
+                        emitted_candidates,
+                    )
+                    is not None
+                )
+                if (
+                    result.status != DIFFERENT_SPEAKER_LIKELY
+                    or SAME_SPEAKER_SUSPECTED in result.flags
+                    or SPEAKER_CHECK_UNAVAILABLE in result.flags
+                    or not self._has_minimal_responsiveness_anchor(candidate)
+                    or duplicate_existing
+                ):
+                    continue
+                rejection_reason = self._speaker_rescue_rejection_reason(candidate)
+                if rejection_reason is not None:
+                    candidate.reason_codes = self._unique_strings(
+                        list(candidate.reason_codes) + [rejection_reason],
+                    )
+                    stats["rejected_candidate_count"] += 1
+                    rejected_reasons[rejection_reason] += 1
+                    continue
+
+                _apply_result_to_candidate(candidate, result)
+                self._trim_speaker_rescued_candidate(
+                    candidate,
+                    sentence_by_id=sentence_by_id,
+                    next_sentence_id_by_id=next_sentence_id_by_id,
+                )
+                candidate.metadata["speaker_check_precomputed"] = True
+                candidate.metadata["speaker_rescue"] = {
+                    "source_gate": suppression_reason,
+                    "reason": SPEAKER_RESCUED_CANDIDATE,
+                    "check_seconds": round(result.check_seconds, 4),
+                }
+                candidate.reason_codes = self._unique_strings(
+                    list(candidate.reason_codes) + [SPEAKER_RESCUED_CANDIDATE],
+                )
+                candidate.review_flags = self._unique_strings(
+                    list(candidate.review_flags) + [SPEAKER_RESCUED_CANDIDATE],
+                )
+                emitted_candidates.append(candidate)
+                suppressed_by_gate_reason_counts[suppression_reason] = max(
+                    0,
+                    int(suppressed_by_gate_reason_counts.get(suppression_reason) or 0)
+                    - 1,
+                )
+                if suppressed_by_gate_reason_counts[suppression_reason] == 0:
+                    del suppressed_by_gate_reason_counts[suppression_reason]
+                rescued_by_gate[suppression_reason] += 1
+                stats["rescued_candidate_count"] += 1
+
+        stats["total_check_seconds"] = round(float(stats["total_check_seconds"]), 4)
+        stats["rescued_by_gate_reasons"] = dict(sorted(rescued_by_gate.items()))
+        stats["rejected_reason_counts"] = dict(sorted(rejected_reasons.items()))
+        stats["candidate_cap_reached"] = (
+            stats["candidate_cap_reached"]
+            or stats["rescued_candidate_count"] >= max_rescues
+        )
+        stats["check_cap_reached"] = (
+            stats["check_cap_reached"]
+            or stats["attempted_candidate_count"] >= max_checks
+        )
+        session.metadata["qa_speaker_rescue"] = stats
+        return stats
+
+    def _speaker_rescue_rejection_reason(
+        self,
+        candidate: QAPairCandidate,
+    ) -> str | None:
+        """Return why a speaker-rescued candidate should still stay suppressed."""
+
+        if self._is_speaker_rescue_conversational_answer(candidate):
+            return SPEAKER_RESCUE_REJECTED_CONVERSATIONAL
+        if self._has_low_speaker_rescue_text_quality(candidate):
+            return SPEAKER_RESCUE_REJECTED_TEXT_QUALITY
+        return None
+
+    def _is_speaker_rescue_conversational_answer(
+        self,
+        candidate: QAPairCandidate,
+    ) -> bool:
+        """Return whether a rescue answer is only Q&A management chatter."""
+
+        normalized_answer = normalize_rule_text(candidate.answer_text or "")
+        if not normalized_answer:
+            return True
+        if self._is_poll_or_backchannel_answer(normalized_answer):
+            return True
+        if self._has_poll_or_backchannel_noise(normalized_answer):
+            return True
+        if self._is_filler_or_boilerplate_answer(normalized_answer):
+            return True
+        if (
+            re.search(r"\b(?:thanks|thank\s+you)\b", normalized_answer)
+            and re.search(
+                r"\b(?:overview|panelists?|presentations?|everyone|everybody)\b",
+                normalized_answer,
+            )
+        ):
+            return True
+        if self._is_moderator_handoff_answer(normalized_answer):
+            return True
+        if self._is_followup_prompt_text(normalized_answer):
+            return True
+        return False
+
+    def _has_low_speaker_rescue_text_quality(
+        self,
+        candidate: QAPairCandidate,
+    ) -> bool:
+        """Return whether existing QA quality scores are too low for rescue."""
+
+        quality_features = candidate.metadata.get("quality_features", {})
+        threshold = float(self.config.qa_speaker_rescue_min_text_quality_score)
+        question_quality = self._safe_float(
+            quality_features.get("question_quality_score"),
+        )
+        answer_quality = self._safe_float(
+            quality_features.get("answer_quality_score"),
+        )
+        if question_quality is not None and question_quality < threshold:
+            return True
+        if answer_quality is not None and answer_quality < threshold:
+            return True
+        return False
+
+    def _trim_speaker_rescued_candidate(
+        self,
+        candidate: QAPairCandidate,
+        *,
+        sentence_by_id: dict[str, Any],
+        next_sentence_id_by_id: dict[str, str],
+    ) -> None:
+        """Clean question focus and answer boundary for an emitted rescue only."""
+
+        trim_debug: dict[str, Any] = {}
+        focused_question = self._speaker_rescue_question_focus(candidate)
+        if focused_question and focused_question != candidate.question_text:
+            trim_debug["original_question_text"] = candidate.question_text
+            candidate.question_text = focused_question
+            trim_debug["question_trimmed"] = True
+
+        completed_answer, completion_debug = self._speaker_rescue_completed_answer(
+            candidate,
+            sentence_by_id=sentence_by_id,
+            next_sentence_id_by_id=next_sentence_id_by_id,
+        )
+        bounded_answer = self._speaker_rescue_answer_within_word_cap(
+            completed_answer,
+        )
+        if bounded_answer and bounded_answer != candidate.answer_text:
+            trim_debug["original_answer_text"] = candidate.answer_text
+            candidate.answer_text = bounded_answer
+            trim_debug["answer_trimmed"] = True
+        trim_debug.update(completion_debug)
+        if trim_debug:
+            candidate.metadata["speaker_rescue_trim"] = trim_debug
+
+    def _speaker_rescue_question_focus(
+        self,
+        candidate: QAPairCandidate,
+    ) -> str:
+        """Return the focused interrogative text for a rescued question."""
+
+        question_debug = candidate.metadata.get("question_debug", {})
+        focus_text = str(
+            question_debug.get("normalized_question_text")
+            or candidate.question_text
+            or "",
+        ).strip()
+        focus_text = self._speaker_rescue_last_interrogative_focus(focus_text)
+        if not focus_text:
+            return candidate.question_text
+        focus_text = self._speaker_rescue_trim_suspended_question_tail(focus_text)
+        if not focus_text:
+            return self._speaker_rescue_shortest_interrogative_sentence(candidate)
+        if focus_text.endswith("?"):
+            return focus_text[0].upper() + focus_text[1:] if focus_text else focus_text
+        if self._has_strong_question_signal(
+            focus_text,
+        ) or self._starts_with_interrogative_word(normalize_rule_text(focus_text)):
+            return focus_text[0].upper() + focus_text[1:] if focus_text else focus_text
+        return self._speaker_rescue_shortest_interrogative_sentence(candidate)
+
+    def _speaker_rescue_shortest_interrogative_sentence(
+        self,
+        candidate: QAPairCandidate,
+    ) -> str:
+        """Return the shortest full question sentence available for rescue focus."""
+
+        question_debug = candidate.metadata.get("question_debug", {})
+        candidates = [
+            str(question_debug.get("normalized_question_text") or "").strip(),
+            str(question_debug.get("raw_unit_text") or "").strip(),
+            str(candidate.question_text or "").strip(),
+        ]
+        full_sentences: list[str] = []
+        for text in candidates:
+            if not text:
+                continue
+            for sentence, _, _ in self._sentence_spans(text):
+                cleaned = sentence.strip(" ,")
+                if cleaned and (
+                    self._has_strong_question_signal(cleaned)
+                    or self._starts_with_interrogative_word(
+                        normalize_rule_text(cleaned),
+                    )
+                ):
+                    full_sentences.append(cleaned)
+        if full_sentences:
+            shortest = min(
+                full_sentences,
+                key=lambda value: count_tokens(normalize_rule_text(value)),
+            )
+            return shortest[0].upper() + shortest[1:] if shortest else shortest
+        fallback = str(candidate.question_text or "").strip()
+        return fallback[0].upper() + fallback[1:] if fallback else fallback
+
+    @staticmethod
+    def _speaker_rescue_last_interrogative_focus(text: str) -> str:
+        """Return a trailing focus clause when a run-on embeds the real question."""
+
+        cleaned = re.sub(r"\s+", " ", text).strip(" ,")
+        patterns = [
+            r"\bche\s+cosa\b",
+            r"\bcosa\b",
+            r"\bcome\b",
+            r"\bperche\b",
+            r"\bperché\b",
+            r"\bwhat\b",
+            r"\bhow\b",
+            r"\bwhy\b",
+            r"\bwhere\b",
+            r"\bwhen\b",
+            r"\bwhich\b",
+            r"\bwho\b",
+        ]
+        matches: list[re.Match[str]] = []
+        for pattern in patterns:
+            for match in re.finditer(pattern, cleaned, flags=re.IGNORECASE):
+                if (
+                    match.group(0).lower() == "cosa"
+                    and cleaned[max(0, match.start() - 4) : match.start()].lower()
+                    == "che "
+                ):
+                    continue
+                matches.append(match)
+        if not matches:
+            return cleaned
+        last_match = max(matches, key=lambda match: match.start())
+        focus = cleaned[last_match.start() :].strip(" ,")
+        return focus if count_tokens(normalize_rule_text(focus)) >= 3 else cleaned
+
+    def _speaker_rescue_trim_suspended_question_tail(self, text: str) -> str:
+        """Remove only dangling rescue-focus tails that end inside a phrase."""
+
+        cleaned = re.sub(r"\s+", " ", text).strip(" ,")
+        if not cleaned:
+            return cleaned
+        if not self._speaker_rescue_question_boundary_incomplete(cleaned):
+            return cleaned
+
+        tokens = cleaned.split()
+        while tokens and self._speaker_rescue_question_boundary_incomplete(
+            " ".join(tokens),
+        ):
+            tokens.pop()
+        trimmed = " ".join(tokens).strip(" ,")
+        normalized_trimmed = normalize_rule_text(trimmed)
+        if (
+            count_tokens(normalized_trimmed) >= 3
+            and (
+                self._has_strong_question_signal(trimmed)
+                or self._starts_with_interrogative_word(normalized_trimmed)
+            )
+        ):
+            return trimmed
+        return ""
+
+    @staticmethod
+    def _speaker_rescue_question_boundary_incomplete(text: str) -> bool:
+        """Return whether a rescued question focus ends on a dangling phrase."""
+
+        normalized_text = normalize_rule_text(text).rstrip(" ,;:")
+        if not normalized_text or normalized_text.endswith((".", "?", "!")):
+            return False
+        tokens = re.findall(r"\b[\w']+\b", normalized_text)
+        if not tokens:
+            return False
+        suspended_end_tokens = {
+            "a",
+            "ad",
+            "al",
+            "alla",
+            "allo",
+            "ai",
+            "agli",
+            "alle",
+            "an",
+            "and",
+            "at",
+            "che",
+            "con",
+            "da",
+            "dal",
+            "dalla",
+            "dalle",
+            "dello",
+            "del",
+            "dei",
+            "di",
+            "e",
+            "ed",
+            "for",
+            "in",
+            "il",
+            "la",
+            "le",
+            "lo",
+            "of",
+            "per",
+            "su",
+            "the",
+            "then",
+            "to",
+            "un",
+            "una",
+            "uno",
+            "with",
+        }
+        return tokens[-1] in suspended_end_tokens
+
+    def _speaker_rescue_completed_answer(
+        self,
+        candidate: QAPairCandidate,
+        *,
+        sentence_by_id: dict[str, Any],
+        next_sentence_id_by_id: dict[str, str],
+    ) -> tuple[str, dict[str, Any]]:
+        """Extend a rescue answer by the known next sentence when annotated."""
+
+        answer_text = str(candidate.answer_text or "").strip()
+        answer_debug = candidate.metadata.get("answer_debug", {})
+        search_signals = answer_debug.get("search_signals", {})
+        next_text_id = str(search_signals.get("answer_boundary_next_text_id") or "")
+        completion_source = "answer_boundary_next_text_id"
+        if not next_text_id and search_signals.get("answer_boundary_status") in {
+            "truncated",
+            "continuation_available",
+        }:
+            answer_sentence_ids = [
+                str(sentence_id)
+                for sentence_id in candidate.answer_sentence_ids
+                if str(sentence_id).strip()
+            ]
+            if answer_sentence_ids:
+                next_text_id = next_sentence_id_by_id.get(answer_sentence_ids[-1], "")
+                completion_source = "next_sentence_after_answer_span"
+        if not next_text_id:
+            return answer_text, {}
+        extension_ids: list[str] = []
+        extension_texts: list[str] = []
+        cursor_text_id = next_text_id
+        max_extension_sentences = 8
+        last_integral_text = (
+            answer_text
+            if not self._speaker_rescue_answer_boundary_incomplete(answer_text)
+            else ""
+        )
+        while cursor_text_id and len(extension_ids) < max_extension_sentences:
+            next_sentence = sentence_by_id.get(cursor_text_id)
+            next_text = str(getattr(next_sentence, "text", "") or "").strip()
+            if not next_text:
+                break
+            if normalize_rule_text(next_text) in normalize_rule_text(answer_text):
+                break
+            extension_ids.append(cursor_text_id)
+            extension_texts.append(next_text)
+            candidate_text = self._join_text([answer_text, *extension_texts])
+            if not self._speaker_rescue_answer_boundary_incomplete(candidate_text):
+                last_integral_text = candidate_text
+                break
+            cursor_text_id = next_sentence_id_by_id.get(cursor_text_id, "")
+        if not extension_texts:
+            return answer_text, {}
+        completed_text = self._join_text([answer_text, *extension_texts])
+        if (
+            self._speaker_rescue_answer_boundary_incomplete(completed_text)
+            and cursor_text_id
+        ):
+            next_sentence = sentence_by_id.get(cursor_text_id)
+            next_text = str(getattr(next_sentence, "text", "") or "").strip()
+            if next_text and normalize_rule_text(next_text) not in normalize_rule_text(
+                completed_text,
+            ):
+                extension_ids.append(cursor_text_id)
+                extension_texts.append(next_text)
+                completed_text = self._join_text([answer_text, *extension_texts])
+                if not self._speaker_rescue_answer_boundary_incomplete(completed_text):
+                    last_integral_text = completed_text
+
+        truncated_to_integral_boundary = False
+        if self._speaker_rescue_answer_boundary_incomplete(completed_text):
+            bounded_text = self._speaker_rescue_first_complete_answer_period(
+                completed_text,
+            )
+            if (
+                bounded_text
+                and not self._speaker_rescue_answer_boundary_incomplete(bounded_text)
+            ):
+                completed_text = bounded_text
+                truncated_to_integral_boundary = True
+            elif last_integral_text:
+                completed_text = last_integral_text
+                truncated_to_integral_boundary = True
+        return (
+            completed_text,
+            {
+                "answer_completion_extended_by": extension_ids[-1],
+                "answer_completion_extended_sentence_ids": extension_ids,
+                "answer_completion_source": completion_source,
+                "answer_completion_truncated_to_integral_boundary": (
+                    truncated_to_integral_boundary
+                ),
+            },
+        )
+
+    @staticmethod
+    def _speaker_rescue_answer_boundary_incomplete(text: str) -> bool:
+        """Return whether a rescued answer still ends on a suspended boundary."""
+
+        normalized_text = normalize_rule_text(text).rstrip(" ,;:")
+        if not normalized_text:
+            return False
+        tokens = re.findall(r"\b[\w']+\b", normalized_text)
+        if not tokens:
+            return False
+        suspended_end_tokens = _INCOMPLETE_ANSWER_END_WORDS | {
+            "a",
+            "and",
+            "c'erano",
+            "che",
+            "con",
+            "del",
+            "dei",
+            "della",
+            "delle",
+            "dello",
+            "dici",
+            "dice",
+            "e",
+            "ed",
+            "hai",
+            "il",
+            "la",
+            "le",
+            "lo",
+            "si",
+            "with",
+        }
+        return tokens[-1] in suspended_end_tokens
+
+    def _speaker_rescue_first_complete_answer_period(self, text: str) -> str:
+        """Return answer text ending at a complete period when possible."""
+
+        cleaned = text.strip()
+        if not cleaned:
+            return cleaned
+        spans = self._sentence_spans(cleaned)
+        for sentence, _, _ in spans:
+            candidate = sentence.strip()
+            if (
+                candidate.endswith((".", "?", "!"))
+                and not self._looks_like_incomplete_answer_span(candidate)
+                and count_tokens(normalize_rule_text(candidate)) >= 4
+            ):
+                return candidate
+        if cleaned.endswith((".", "?", "!")):
+            return cleaned
+        return cleaned
+
+    def _speaker_rescue_answer_within_word_cap(self, text: str) -> str:
+        """Return rescued answer capped at a complete sentence or clause."""
+
+        cleaned = re.sub(r"\s+", " ", text).strip()
+        if not cleaned:
+            return cleaned
+        cap = max(1, int(self.config.qa_speaker_rescue_answer_word_cap))
+        if count_tokens(normalize_rule_text(cleaned)) <= cap:
+            return cleaned
+
+        accumulated: list[str] = []
+        best_complete = ""
+        for sentence, _, _ in self._sentence_spans(cleaned):
+            candidate_sentence = sentence.strip()
+            if not candidate_sentence:
+                continue
+            candidate_text = self._join_text([*accumulated, candidate_sentence])
+            if count_tokens(normalize_rule_text(candidate_text)) > cap:
+                break
+            accumulated.append(candidate_sentence)
+            if (
+                candidate_sentence.endswith((".", "?", "!"))
+                and not self._looks_like_incomplete_answer_span(candidate_text)
+            ):
+                best_complete = candidate_text
+
+        if best_complete:
+            return best_complete
+        first_complete = self._speaker_rescue_first_complete_answer_period(cleaned)
+        if count_tokens(normalize_rule_text(first_complete)) <= cap:
+            return first_complete
+        clause_boundary = self._truncate_text_to_clause_cap(cleaned, cap)
+        if clause_boundary:
+            return clause_boundary
+        return self._truncate_text_to_word_cap(cleaned, cap)
+
+    def _truncate_text_to_clause_cap(self, text: str, cap: int) -> str:
+        """Return text cut at the last clause boundary within the word cap."""
+
+        matches = list(re.finditer(r"\b\w+\b", text))
+        if not matches:
+            return text.strip()
+        cap_end = matches[min(len(matches), max(1, cap)) - 1].end()
+        capped_text = text[:cap_end]
+        boundary_pattern = (
+            r"[,;:]\s+|\s+-\s+|"
+            r"\s+(?:and|but|so|because|then|which|that|"
+            r"e|ma|perche|perché|quindi|che)\s+"
+        )
+        boundaries = list(
+            re.finditer(boundary_pattern, capped_text, flags=re.IGNORECASE),
+        )
+        for boundary in reversed(boundaries):
+            candidate = capped_text[: boundary.start()].strip(" ,;:-")
+            if count_tokens(normalize_rule_text(candidate)) >= 4:
+                return candidate
+        return ""
+
+    @staticmethod
+    def _truncate_text_to_word_cap(text: str, cap: int) -> str:
+        """Return text cut after at most cap word tokens."""
+
+        matches = list(re.finditer(r"\b\w+\b", text))
+        if len(matches) <= cap:
+            return text.strip()
+        end_index = matches[max(0, cap - 1)].end()
+        return text[:end_index].strip(" ,;:")
+
+    def _speaker_rescue_candidate_is_eligible(
+        self,
+        candidate: QAPairCandidate,
+        suppression_reason: str,
+    ) -> bool:
+        """Return whether a suppressed candidate may use speaker rescue."""
+
+        soft_reasons = {
+            "low_autonomy_implicit_question",
+            "weak_expanded_contextual_question",
+            "surface_answer_cue_risk",
+            "below_min_qa_confidence",
+            "weak_answer_responsiveness",
+        }
+        if suppression_reason not in soft_reasons:
+            return False
+        if suppression_reason == "below_min_qa_confidence":
+            margin = max(
+                0.0,
+                float(self.config.qa_speaker_rescue_min_confidence_margin),
+            )
+            if candidate.confidence < self.config.min_qa_confidence - margin:
+                return False
+
+        reason_codes = set(candidate.reason_codes)
+        quality_features = candidate.metadata.get("quality_features", {})
+        risk_reasons = set(quality_features.get("risk_reasons") or [])
+        hard_reason_codes = {
+            "rhetorical_checkin_question",
+            "rhetorical_poll_question",
+            "declarative_tag_question",
+            "fragment_question",
+            "question_intent_subordinate_fragment",
+            "procedural_question_request",
+            "same_sentence_without_answer_cue",
+            "answer_boilerplate_penalty",
+            "answer_poll_or_backchannel_penalty",
+            "moderator_handoff_answer_penalty",
+            "low_information_answer_penalty",
+            "answer_circular_echo_penalty",
+            "question_continuation_answer_penalty",
+            "answer_is_question",
+            "answer_contains_question_mark",
+            SAME_SPEAKER_SUSPECTED,
+            SPEAKER_CHECK_UNAVAILABLE,
+        }
+        hard_risk_reasons = {
+            "poll_or_backchannel_noise",
+            "answer_poll_or_backchannel",
+            "circular_answer_echo",
+            "competing_question",
+            "question_span_integrity",
+            "followup_prompt_answer",
+            "semantic_nonresponsive",
+            "monologue_continuation_risk",
+        }
+        if reason_codes & hard_reason_codes:
+            return False
+        if risk_reasons & hard_risk_reasons:
+            return False
+        observed_gate_reasons = (reason_codes | risk_reasons) & (
+            soft_reasons | hard_reason_codes | hard_risk_reasons
+        )
+        return observed_gate_reasons <= soft_reasons
+
+    def _has_minimal_responsiveness_anchor(
+        self,
+        candidate: QAPairCandidate,
+    ) -> bool:
+        """Return whether the answer has a small non-speaker responsiveness cue."""
+
+        if candidate.answer_is_question:
+            return False
+        reason_codes = set(candidate.reason_codes)
+        quality_features = candidate.metadata.get("quality_features", {})
+        answer_debug = candidate.metadata.get("answer_debug", {})
+        partial_scores = answer_debug.get("partial_scores", {})
+        answer_responsiveness_score = self._safe_float(
+            quality_features.get("answer_responsiveness_score"),
+        )
+        if (
+            answer_responsiveness_score is not None
+            and answer_responsiveness_score >= 0.34
+        ):
+            return True
+        if reason_codes & {
+            "answer_keyword_overlap",
+            "answer_responsiveness_anchor",
+            "answer_responsiveness_strong",
+            "answer_cue_match",
+            "answer_in_next_sentence",
+            "speaker_turn_support",
+            "interview_cluster_answer_support",
+            "interview_echo_question",
+        }:
+            return True
+        return any(
+            (self._safe_float(partial_scores.get(key)) or 0.0) > threshold
+            for key, threshold in (
+                ("answer_cues", 0.0),
+                ("keyword_overlap", 0.03),
+                ("answer_context", 0.0),
+            )
+        )
+
+    def _is_interrogative_sentence_proxy(self, text: str) -> bool:
+        """Return whether a sentence has a cheap interrogative signal."""
+
+        stripped_text = text.strip()
+        if stripped_text.endswith("?"):
+            return True
+        normalized_text = normalize_rule_text(stripped_text)
+        if not normalized_text:
+            return False
+        if any(
+            pattern.search(normalized_text)
+            for pattern in DECLARATIVE_WHAT_PATTERNS
+        ):
+            return False
+        return bool(
+            collect_rule_matches(normalized_text, QUESTION_CUE_RULES)
+            or collect_rule_matches(normalized_text, DIDACTIC_QUESTION_RULES)
+        )
+
+    def _apply_semantic_responsiveness_scoring(
+        self,
+        *,
+        candidates: Sequence[QAPairCandidate],
+        session: LectureSession,
+    ) -> None:
+        """Optionally rescore already-extracted candidates with local embeddings."""
+
+        semantic_metrics: dict[str, Any] = {
+            "schema_version": "1.0",
+            "enabled": bool(self.config.qa_semantic_responsiveness_enabled),
+            "status": "disabled",
+            "note": "semantic responsiveness scorer disabled",
+            "model_name": self.config.qa_semantic_responsiveness_model_name,
+            "backend": getattr(
+                self.semantic_responsiveness_backend,
+                "backend_name",
+                None,
+            ),
+            "requested_candidate_count": len(candidates),
+            "scored_candidate_count": 0,
+            "total_seconds": 0.0,
+            "seconds_per_candidate": None,
+            "load_seconds": None,
+            "model_footprint_bytes": None,
+            "model_footprint_mb": None,
+            "gate_enabled": bool(
+                self.config.qa_semantic_responsiveness_gate_enabled,
+            ),
+            "gate_min_score": round(
+                float(self.config.qa_semantic_responsiveness_gate_min_score),
+                4,
+            ),
+            "gate_penalty": round(
+                float(self.config.qa_semantic_responsiveness_gate_penalty),
+                4,
+            ),
+        }
+        if not self.config.qa_semantic_responsiveness_enabled:
+            session.metadata["qa_semantic_responsiveness"] = semantic_metrics
+            return
+        if not candidates:
+            semantic_metrics.update(
+                {
+                    "status": "skipped",
+                    "note": "no extracted candidates to score",
+                },
+            )
+            session.metadata["qa_semantic_responsiveness"] = semantic_metrics
+            return
+
+        max_candidates = self.config.qa_semantic_responsiveness_max_candidates
+        scoring_inputs = [
+            SemanticResponsivenessInput(
+                candidate_index=index,
+                question_text=candidate.question_text,
+                answer_text=candidate.answer_text or "",
+                continuation_text=self._semantic_continuation_text(candidate),
+            )
+            for index, candidate in enumerate(candidates[:max_candidates])
+            if candidate.question_text.strip() and (candidate.answer_text or "").strip()
+        ]
+        if not scoring_inputs:
+            semantic_metrics.update(
+                {
+                    "status": "skipped",
+                    "note": "no candidates with both question and answer text",
+                },
+            )
+            session.metadata["qa_semantic_responsiveness"] = semantic_metrics
+            return
+
+        started_at = perf_counter()
+        try:
+            semantic_scores = self.semantic_responsiveness_backend.score_candidates(
+                scoring_inputs,
+            )
+        except SemanticResponsivenessUnavailableError as exc:
+            self._annotate_semantic_responsiveness_fallback(
+                candidates=candidates,
+                fallback_reason=str(exc),
+            )
+            semantic_metrics.update(
+                {
+                    "status": "fallback",
+                    "note": f"semantic responsiveness disabled: {exc}",
+                    "fallback_reason": str(exc),
+                    "total_seconds": round(perf_counter() - started_at, 6),
+                    "load_seconds": getattr(
+                        self.semantic_responsiveness_backend,
+                        "load_seconds",
+                        None,
+                    ),
+                    "model_footprint_bytes": getattr(
+                        self.semantic_responsiveness_backend,
+                        "model_footprint_bytes",
+                        None,
+                    ),
+                },
+            )
+            self._finalize_semantic_responsiveness_metrics(semantic_metrics)
+            session.metadata["qa_semantic_responsiveness"] = semantic_metrics
+            return
+        except Exception as exc:  # pragma: no cover - runtime safety net
+            self._annotate_semantic_responsiveness_fallback(
+                candidates=candidates,
+                fallback_reason=str(exc),
+            )
+            semantic_metrics.update(
+                {
+                    "status": "fallback",
+                    "note": f"semantic responsiveness runtime fallback: {exc}",
+                    "fallback_reason": str(exc),
+                    "total_seconds": round(perf_counter() - started_at, 6),
+                },
+            )
+            self._finalize_semantic_responsiveness_metrics(semantic_metrics)
+            session.metadata["qa_semantic_responsiveness"] = semantic_metrics
+            return
+
+        score_by_index = {score.candidate_index: score for score in semantic_scores}
+        penalized_count = 0
+        for index, candidate in enumerate(candidates):
+            score = score_by_index.get(index)
+            quality_features = candidate.metadata.setdefault("quality_features", {})
+            if score is None:
+                quality_features["semantic_responsiveness_status"] = "not_scored"
+                continue
+            self._annotate_semantic_responsiveness_score(candidate, score)
+            if self._apply_semantic_responsiveness_gate_penalty(candidate, score.score):
+                penalized_count += 1
+
+        total_seconds = round(perf_counter() - started_at, 6)
+        semantic_metrics.update(
+            {
+                "status": "applied",
+                "note": "semantic responsiveness applied to extracted candidates only",
+                "scored_candidate_count": len(semantic_scores),
+                "total_seconds": total_seconds,
+                "seconds_per_candidate": (
+                    round(total_seconds / len(semantic_scores), 6)
+                    if semantic_scores
+                    else None
+                ),
+                "load_seconds": getattr(
+                    self.semantic_responsiveness_backend,
+                    "load_seconds",
+                    None,
+                ),
+                "model_footprint_bytes": getattr(
+                    self.semantic_responsiveness_backend,
+                    "model_footprint_bytes",
+                    None,
+                ),
+                "gate_penalized_candidate_count": penalized_count,
+                "score_distribution": self._score_distribution(
+                    [score.score for score in semantic_scores],
+                ),
+            },
+        )
+        self._finalize_semantic_responsiveness_metrics(semantic_metrics)
+        session.metadata["qa_semantic_responsiveness"] = semantic_metrics
+
+    @staticmethod
+    def _semantic_continuation_text(candidate: QAPairCandidate) -> str | None:
+        """Return candidate-local continuation evidence for semantic scoring."""
+
+        context_text = (candidate.context_text or "").strip()
+        if context_text and context_text != candidate.question_text.strip():
+            return context_text
+        question_debug = candidate.metadata.get("question_debug", {})
+        if isinstance(question_debug, dict):
+            expanded = str(question_debug.get("expanded_question_context") or "").strip()
+            if expanded and expanded != candidate.question_text.strip():
+                return expanded
+        return None
+
+    def _annotate_semantic_responsiveness_score(
+        self,
+        candidate: QAPairCandidate,
+        score: Any,
+    ) -> None:
+        """Attach semantic responsiveness score and debug to one candidate."""
+
+        quality_features = candidate.metadata.setdefault("quality_features", {})
+        quality_features.update(
+            {
+                "semantic_responsiveness_status": "applied",
+                "semantic_responsiveness_score": round(float(score.score), 4),
+                "semantic_question_answer_similarity": round(
+                    float(score.question_answer_similarity),
+                    4,
+                ),
+                "semantic_answer_continuation_similarity": (
+                    round(float(score.answer_continuation_similarity), 4)
+                    if score.answer_continuation_similarity is not None
+                    else None
+                ),
+                "semantic_echo_penalty": round(float(score.echo_penalty), 4),
+                "semantic_continuation_penalty": round(
+                    float(score.continuation_penalty),
+                    4,
+                ),
+            },
+        )
+        candidate.metadata["semantic_responsiveness_debug"] = {
+            "score": round(float(score.score), 4),
+            "question_answer_similarity": round(
+                float(score.question_answer_similarity),
+                4,
+            ),
+            "answer_continuation_similarity": (
+                round(float(score.answer_continuation_similarity), 4)
+                if score.answer_continuation_similarity is not None
+                else None
+            ),
+            "echo_penalty": round(float(score.echo_penalty), 4),
+            "continuation_penalty": round(float(score.continuation_penalty), 4),
+            "elapsed_seconds": round(float(score.elapsed_seconds), 6),
+            **dict(getattr(score, "metadata", {}) or {}),
+        }
+
+    def _apply_semantic_responsiveness_gate_penalty(
+        self,
+        candidate: QAPairCandidate,
+        semantic_score: float,
+    ) -> bool:
+        """Apply configured semantic responsiveness penalty to weak candidates."""
+
+        if not self.config.qa_semantic_responsiveness_gate_enabled:
+            return False
+        min_score = float(self.config.qa_semantic_responsiveness_gate_min_score)
+        if semantic_score >= min_score:
+            return False
+
+        penalty = float(self.config.qa_semantic_responsiveness_gate_penalty)
+        quality_features = candidate.metadata.setdefault("quality_features", {})
+        old_quality_score = self._safe_float(
+            quality_features.get("final_quality_score"),
+        )
+        old_risk_score = self._safe_float(quality_features.get("risk_score"))
+
+        candidate.confidence = self._clamp(candidate.confidence - penalty)
+        candidate.confidence_score = candidate.confidence
+        candidate.confidence_label = self._confidence_label(candidate.confidence)
+        candidate.reason_codes = self._unique_strings(
+            list(candidate.reason_codes) + ["semantic_responsiveness_penalty"],
+        )
+        candidate.review_flags = self._unique_strings(
+            list(candidate.review_flags) + ["semantic_nonresponsive"],
+        )
+        risk_reasons = self._unique_strings(
+            list(quality_features.get("risk_reasons") or [])
+            + ["semantic_nonresponsive"],
+        )
+        risk_score = self._clamp((old_risk_score or 0.0) + penalty)
+        final_quality_score = self._clamp((old_quality_score or 0.0) - penalty)
+        quality_features.update(
+            {
+                "semantic_gate_penalty_applied": True,
+                "semantic_gate_min_score": round(min_score, 4),
+                "semantic_gate_penalty": round(penalty, 4),
+                "risk_reasons": risk_reasons,
+                "risk_score": round(risk_score, 4),
+                "final_quality_score": round(final_quality_score, 4),
+                "quality_band": self._quality_band(final_quality_score),
+                "risk_band": self._risk_band(risk_score),
+            },
+        )
+        return True
+
+    @staticmethod
+    def _annotate_semantic_responsiveness_fallback(
+        *,
+        candidates: Sequence[QAPairCandidate],
+        fallback_reason: str,
+    ) -> None:
+        """Mark candidates as unscored after semantic fallback."""
+
+        for candidate in candidates:
+            quality_features = candidate.metadata.setdefault("quality_features", {})
+            quality_features["semantic_responsiveness_status"] = "fallback"
+            quality_features["semantic_responsiveness_score"] = None
+            quality_features["semantic_responsiveness_fallback_reason"] = (
+                fallback_reason
+            )
+
+    @staticmethod
+    def _finalize_semantic_responsiveness_metrics(
+        metrics: dict[str, Any],
+    ) -> None:
+        """Fill derived semantic responsiveness metric fields."""
+
+        footprint_bytes = metrics.get("model_footprint_bytes")
+        if isinstance(footprint_bytes, int | float):
+            metrics["model_footprint_mb"] = round(float(footprint_bytes) / 1_000_000, 3)
+        if (
+            metrics.get("seconds_per_candidate") is None
+            and (metrics.get("scored_candidate_count") or 0)
+            and metrics.get("total_seconds") is not None
+        ):
+            metrics["seconds_per_candidate"] = round(
+                float(metrics["total_seconds"]) / int(metrics["scored_candidate_count"]),
+                6,
+            )
+
+    @staticmethod
+    def _score_distribution(scores: Sequence[float]) -> dict[str, float | int | None]:
+        """Return compact distribution for semantic responsiveness scores."""
+
+        if not scores:
+            return {"count": 0, "min": None, "avg": None, "median": None, "max": None}
+        sorted_scores = sorted(float(score) for score in scores)
+        midpoint = len(sorted_scores) // 2
+        if len(sorted_scores) % 2:
+            median = sorted_scores[midpoint]
+        else:
+            median = (sorted_scores[midpoint - 1] + sorted_scores[midpoint]) / 2
+        return {
+            "count": len(sorted_scores),
+            "min": round(sorted_scores[0], 4),
+            "avg": round(sum(sorted_scores) / len(sorted_scores), 4),
+            "median": round(median, 4),
+            "max": round(sorted_scores[-1], 4),
+        }
+
+    def _qa_candidate_suppression_reason(
+        self,
+        candidate: QAPairCandidate,
+    ) -> str | None:
+        """Return the aggregate gate reason for a built but unexported candidate."""
+
+        if (
+            self.config.pipeline_profile == "quality_local"
+            and self._candidate_has_deflection_answer(candidate)
+        ):
+            candidate.reason_codes = self._unique_strings(
+                list(candidate.reason_codes) + ["deflection_answer_penalty"],
+            )
+            return "deflection_answer_penalty"
+        if candidate.confidence < self.config.min_qa_confidence:
+            return "below_min_qa_confidence"
+        if self._should_emit_qa_candidate(candidate):
+            return None
+        return self._infer_quality_gate_suppression_reason(candidate)
+
+    def _infer_quality_gate_suppression_reason(
+        self,
+        candidate: QAPairCandidate,
+    ) -> str:
+        """Return a stable primary reason for quality-local gate suppression."""
+
+        reason_codes = set(candidate.reason_codes)
+        quality_features = candidate.metadata.get("quality_features", {})
+        risk_reasons = set(quality_features.get("risk_reasons") or [])
+        question_debug = candidate.metadata.get("question_debug", {})
+
+        if "deflection_answer_penalty" in reason_codes:
+            return "deflection_answer_penalty"
+
+        weak_question_reasons = {
+            "declarative_tag_question",
+            "fragment_question",
+            "low_autonomy_implicit_question",
+            "procedural_question_request",
+            "question_intent_subordinate_fragment",
+            "rhetorical_checkin_question",
+            "rhetorical_poll_question",
+        }
+        for reason in sorted(reason_codes & weak_question_reasons):
+            return reason
+
+        weak_pair_reasons = {
+            "answer_boilerplate_penalty",
+            "answer_circular_echo_penalty",
+            "deflection_answer_penalty",
+            "answer_poll_or_backchannel_penalty",
+            "low_information_answer_penalty",
+            "moderator_handoff_answer_penalty",
+            "question_continuation_answer_penalty",
+            "same_sentence_without_answer_cue",
+        }
+        if candidate.confidence < 0.72:
+            for reason in sorted(reason_codes & weak_pair_reasons):
+                return reason
+
+        question_intent = question_debug.get("question_intent")
+        if question_intent in {"embedded_statement_question", "weak_question_form"}:
+            return str(question_intent)
+
+        if (
+            {
+                "question_without_terminal_mark_recovered",
+                "split_question_recomposed",
+            }.issubset(reason_codes)
+            and "question_mark" not in reason_codes
+        ):
+            return "question_without_terminal_mark_recovered"
+
+        if "quality_local_deferred_penalty" in reason_codes:
+            return "quality_local_deferred_penalty"
+        if "semantic_nonresponsive" in risk_reasons:
+            return "semantic_nonresponsive"
+
+        ordered_risk_reasons = [
+            "poll_or_backchannel_noise",
+            "answer_poll_or_backchannel",
+            "surface_answer_cue_risk",
+            "implicit_question_risk",
+            "quality_local_deferred",
+            "unanchored_quantity_answer",
+            "followup_prompt_answer",
+            "weak_implicit_quantity_question",
+            "weak_expanded_contextual_question",
+            "thin_answer_reply",
+            "low_sentence_autonomy",
+            "incomplete_answer_span",
+            "answer_truncated_at_boundary",
+            "question_span_integrity",
+            "weak_answer_responsiveness",
+            "monologue_continuation_risk",
+            "semantic_nonresponsive",
+            "low_relevance",
+            "competing_question",
+        ]
+        for reason in ordered_risk_reasons:
+            if reason in risk_reasons or reason in reason_codes:
+                return reason
+        return "quality_local_gate"
 
     def _should_emit_qa_candidate(self, candidate: QAPairCandidate) -> bool:
         """Return whether a built candidate should be exported."""
@@ -1295,6 +2777,9 @@ class QAPairExtractor:
         answer_debug = candidate.metadata.get("answer_debug", {})
         question_debug = candidate.metadata.get("question_debug", {})
         partial_scores = answer_debug.get("partial_scores", {})
+
+        if "deflection_answer_penalty" in reason_codes:
+            return False
 
         weak_question_reasons = {
             "rhetorical_checkin_question",
@@ -1311,6 +2796,8 @@ class QAPairExtractor:
         weak_pair_reasons = {
             "same_sentence_without_answer_cue",
             "answer_boilerplate_penalty",
+            "deflection_answer_penalty",
+            "answer_poll_or_backchannel_penalty",
             "moderator_handoff_answer_penalty",
             "low_information_answer_penalty",
             "answer_circular_echo_penalty",
@@ -1369,6 +2856,56 @@ class QAPairExtractor:
         span_completeness_score = float(
             partial_scores.get("span_completeness") or 0.0,
         )
+        answer_distance_units = int(answer_debug.get("answer_distance_units") or 0)
+        context_only_risk_reasons = {"weak_context_risk", "thin_context_risk"}
+        context_risk_penalty = 0.0
+        if "weak_context_risk" in risk_reasons:
+            context_risk_penalty += 0.14
+        if "thin_context_risk" in risk_reasons:
+            context_risk_penalty += 0.16
+        context_neutral_quality_score = (
+            min(1.0, final_quality_score + context_risk_penalty)
+            if final_quality_score is not None
+            else None
+        )
+        fragile_question_recovery_reasons = {
+            "question_without_terminal_mark_recovered",
+            "split_question_recomposed",
+            "runon_question_candidate",
+        }
+        if (
+            {
+                "question_without_terminal_mark_recovered",
+                "split_question_recomposed",
+            }.issubset(reason_codes)
+            and "question_mark" not in reason_codes
+        ):
+            return False
+        if (
+            risk_reasons
+            and risk_reasons.issubset(context_only_risk_reasons)
+            and not reason_codes & fragile_question_recovery_reasons
+        ):
+            return True
+        if (
+            "question_without_terminal_mark_recovered" in reason_codes
+            and answer_distance_units > 1
+        ):
+            return False
+        if (
+            "runon_question_candidate" in reason_codes
+            and "runon_question_local_answer" not in reason_codes
+        ):
+            return False
+        if (
+            "runon_question_local_answer" in reason_codes
+            and (
+                answer_distance_units != 1
+                or answer_responsiveness_score is None
+                or answer_responsiveness_score < 0.48
+            )
+        ):
+            return False
         local_socratic_completion = (
             "socratic_short_answer_support" in reason_codes
             and "answer_keyword_overlap" in reason_codes
@@ -1392,6 +2929,25 @@ class QAPairExtractor:
             and (
                 answer_responsiveness_score is None
                 or answer_responsiveness_score >= 0.48
+            )
+        ):
+            return True
+        if (
+            local_socratic_completion
+            and candidate.confidence >= 0.44
+            and context_neutral_quality_score is not None
+            and context_neutral_quality_score >= 0.30
+            and (
+                answer_responsiveness_score is None
+                or answer_responsiveness_score >= 0.48
+            )
+            and risk_reasons.issubset(
+                {
+                    "weak_context_risk",
+                    "thin_context_risk",
+                    "low_sentence_autonomy",
+                    "competing_question",
+                },
             )
         ):
             return True
@@ -1422,9 +2978,36 @@ class QAPairExtractor:
             interview_echo_completion
             and candidate.confidence >= 0.60
             and final_quality_score is not None
-            and final_quality_score >= 0.48
+            and final_quality_score >= (
+                0.42 if "question_span_integrity" in risk_reasons else 0.48
+            )
             and answer_quality_score is not None
             and answer_quality_score >= 0.45
+        ):
+            return True
+        terminal_local_interview_question = (
+            "question_span_integrity" in risk_reasons
+            and "question_mark" in reason_codes
+            and "answer_in_next_sentence" in reason_codes
+            and "answer_is_question" not in reason_codes
+            and "answer_contains_question_mark" not in reason_codes
+            and "poll_or_backchannel_noise" not in risk_reasons
+            and "followup_prompt_answer" not in risk_reasons
+            and "weak_answer_responsiveness" not in risk_reasons
+            and "low_boundary_confidence" not in risk_reasons
+        )
+        if (
+            terminal_local_interview_question
+            and answer_distance_units == 1
+            and candidate.confidence >= 0.50
+            and final_quality_score is not None
+            and final_quality_score >= 0.34
+            and answer_quality_score is not None
+            and answer_quality_score >= 0.40
+            and (
+                answer_responsiveness_score is None
+                or answer_responsiveness_score >= 0.50
+            )
         ):
             return True
         extended_before_competing = (
@@ -1454,9 +3037,9 @@ class QAPairExtractor:
                 return False
             if "poll_or_backchannel_noise" in risk_reasons:
                 return False
-            if "surface_answer_cue_risk" in risk_reasons and final_quality_score < 0.62:
+            if "answer_poll_or_backchannel" in risk_reasons:
                 return False
-            if "thin_context_risk" in risk_reasons and final_quality_score < 0.60:
+            if "surface_answer_cue_risk" in risk_reasons and final_quality_score < 0.62:
                 return False
             if (
                 "implicit_question_cue" in reason_codes
@@ -1561,8 +3144,42 @@ class QAPairExtractor:
                 )
             ):
                 return False
+            if (
+                "semantic_nonresponsive" in risk_reasons
+                and final_quality_score < 0.72
+            ):
+                return False
 
         return True
+
+    def _candidate_has_deflection_answer(self, candidate: QAPairCandidate) -> bool:
+        """Return whether an exported-level candidate contains a deflection answer."""
+
+        answer_text = candidate.answer_text or ""
+        normalized_answer = normalize_rule_text(answer_text)
+        answer_tokens = self._content_token_list(normalized_answer)
+        if not answer_tokens or count_tokens(normalized_answer) > 18:
+            return False
+        alignment = self._question_answer_alignment(
+            question_text=candidate.question_text,
+            answer_text=answer_text,
+            question_type=candidate.question_type,
+            answer_source="candidate_gate",
+        )
+        if alignment.get("shared_keywords") or alignment.get("shared_numbers"):
+            return False
+        if collect_rule_matches(normalized_answer, ANSWER_CUE_RULES):
+            return False
+        token_set = set(answer_tokens)
+        meta_count = sum(1 for token in answer_tokens if token in _DEFLECTION_META_TOKENS)
+        dismissive_count = sum(
+            1 for token in answer_tokens if token in _DEFLECTION_DISMISSIVE_TOKENS
+        )
+        return bool(
+            meta_count >= 1
+            and (dismissive_count >= 1 or token_set & _NEGATION_TOKENS)
+            and (meta_count / max(1, len(answer_tokens))) >= 0.20
+        )
 
     def _select_ranked_answer(
         self,
@@ -1595,6 +3212,26 @@ class QAPairExtractor:
 
         kept: list[QAPairCandidate] = []
         for candidate in candidates:
+            echo_duplicate_index = self._find_echo_pair_duplicate(candidate, kept)
+            if echo_duplicate_index is not None:
+                existing = kept[echo_duplicate_index]
+                if self._echo_pair_winner(candidate, existing) is candidate:
+                    candidate.reason_codes = self._unique_strings(
+                        list(candidate.reason_codes) + ["echo_pair_deduplicated"],
+                    )
+                    candidate.review_flags = self._unique_strings(
+                        list(candidate.review_flags) + ["deduplicated_near_duplicate"],
+                    )
+                    kept[echo_duplicate_index] = candidate
+                else:
+                    existing.reason_codes = self._unique_strings(
+                        list(existing.reason_codes) + ["echo_pair_deduplicated"],
+                    )
+                    existing.review_flags = self._unique_strings(
+                        list(existing.review_flags) + ["deduplicated_near_duplicate"],
+                    )
+                continue
+
             duplicate_index = self._find_near_duplicate_candidate(candidate, kept)
             if duplicate_index is None:
                 kept.append(candidate)
@@ -1619,6 +3256,114 @@ class QAPairExtractor:
                     list(existing.review_flags) + ["deduplicated_near_duplicate"],
                 )
         return kept
+
+    def _find_echo_pair_duplicate(
+        self,
+        candidate: QAPairCandidate,
+        existing_candidates: Sequence[QAPairCandidate],
+    ) -> int | None:
+        """Return the adjacent candidate index for question-as-answer echoes."""
+
+        if not existing_candidates:
+            return None
+        index = len(existing_candidates) - 1
+        existing = existing_candidates[index]
+        if not self._candidate_times_are_close(candidate, existing):
+            return None
+        if self._candidates_form_echo_pair(candidate, existing):
+            return index
+        return None
+
+    def _candidates_form_echo_pair(
+        self,
+        left: QAPairCandidate,
+        right: QAPairCandidate,
+    ) -> bool:
+        """Return whether adjacent candidates are an echo pair, not just repeats."""
+
+        left_answer = left.answer_text or ""
+        right_answer = right.answer_text or ""
+        if not left_answer.strip() or not right_answer.strip():
+            return False
+        if self._has_contextual_followup_question(left.question_text):
+            return False
+        if self._has_contextual_followup_question(right.question_text):
+            return False
+        answer_overlap = self._token_overlap_ratio(left_answer, right_answer)
+        if answer_overlap < 0.45:
+            return False
+        left_question_echoes_right_answer = self._token_overlap_ratio(
+            left.question_text,
+            right_answer,
+        )
+        right_question_echoes_left_answer = self._token_overlap_ratio(
+            right.question_text,
+            left_answer,
+        )
+        return max(
+            left_question_echoes_right_answer,
+            right_question_echoes_left_answer,
+        ) >= 0.55
+
+    def _echo_pair_winner(
+        self,
+        left: QAPairCandidate,
+        right: QAPairCandidate,
+    ) -> QAPairCandidate:
+        """Return the non-echo candidate to keep from an adjacent echo pair."""
+
+        left_echo_score = self._token_overlap_ratio(
+            left.question_text,
+            right.answer_text or "",
+        )
+        right_echo_score = self._token_overlap_ratio(
+            right.question_text,
+            left.answer_text or "",
+        )
+        if abs(left_echo_score - right_echo_score) >= 0.05:
+            return right if left_echo_score > right_echo_score else left
+        return max((left, right), key=self._echo_pair_quality_sort_key)
+
+    @staticmethod
+    def _echo_pair_quality_sort_key(
+        candidate: QAPairCandidate,
+    ) -> tuple[int, float, int]:
+        """Prefer lower noise, then confidence, for ambiguous echo pairs."""
+
+        noise_penalty = sum(
+            1
+            for value in [*candidate.reason_codes, *candidate.review_flags]
+            if any(
+                marker in value
+                for marker in (
+                    "backchannel",
+                    "boilerplate",
+                    "truncated",
+                    "incomplete",
+                    "thin_answer",
+                    "answer_poll",
+                )
+            )
+        )
+        answer_length = count_tokens(normalize_rule_text(candidate.answer_text or ""))
+        return (-noise_penalty, float(candidate.confidence), answer_length)
+
+    def _has_contextual_followup_question(self, question_text: str) -> bool:
+        """Return whether a question is context plus a short new follow-up."""
+
+        spans = [sentence.strip() for sentence, _, _ in self._sentence_spans(question_text)]
+        if len(spans) < 2:
+            return False
+        trailing = spans[-1]
+        normalized_trailing = normalize_rule_text(trailing)
+        return (
+            trailing.endswith("?")
+            and count_tokens(normalized_trailing) <= 4
+            and (
+                self._starts_with_interrogative_word(normalized_trailing)
+                or self._has_autonomous_question_head(normalized_trailing)
+            )
+        )
 
     def _find_near_duplicate_candidate(
         self,
@@ -1783,7 +3528,10 @@ class QAPairExtractor:
         """Return question candidates found in the selected QA input layer."""
 
         candidates: list[QuestionCandidate] = []
+        skip_unit_indexes: set[int] = set()
         for index, unit in enumerate(units):
+            if index in skip_unit_indexes:
+                continue
             extracted = self._extract_question_parts(unit.text)
             if extracted is None:
                 continue
@@ -1803,22 +3551,72 @@ class QAPairExtractor:
             question_evaluation = self._evaluate_question_text(question_text)
             if question_evaluation is None:
                 continue
-
-            question_units = [unit]
-            context_expansion = self._expand_question_context(
+            question_span_integrity = self._question_span_integrity_signal(
+                unit_text=unit.text,
                 question_text=question_text,
-                unit_index=index,
+                question_preamble=extracted.question_preamble,
+            )
+            if "question_without_terminal_mark_recovered" in question_evaluation[
+                "reason_codes"
+            ]:
+                if not self._allows_missing_terminal_preamble_recovery(
+                    extracted.question_preamble
+                ):
+                    continue
+                if not self._has_missing_terminal_local_support(
+                    unit_index=index,
+                    units=units,
+                    local_answer_seed=local_answer_seed,
+                    question_text=question_text,
+                ):
+                    continue
+
+            candidate_unit = unit
+            candidate_index = index
+            question_units = [unit]
+            split_recomposition = self._recompose_split_question_span(
+                focus_question_text=question_text,
+                focus_unit_index=index,
                 units=units,
                 segment_lookup=segment_lookup,
             )
-            if context_expansion["question_units"]:
-                question_units = list(context_expansion["question_units"])
-                question_text = str(context_expansion["question_text"])
+            if split_recomposition is not None:
+                question_units = list(split_recomposition["question_units"])
+                question_text = str(split_recomposition["question_text"])
+                candidate_unit = question_units[-1]
+                candidate_index = candidate_unit.index
+                local_answer_seed = (
+                    None
+                    if split_recomposition["focus_position"] == "first"
+                    else local_answer_seed
+                )
+                skip_unit_indexes.update(
+                    int(span_unit.index)
+                    for span_unit in question_units
+                    if int(span_unit.index) > index
+                )
+                context_expansion = {
+                    "question_text": question_text,
+                    "question_units": [],
+                    "reason_codes": ["split_question_recomposed"],
+                    "debug": split_recomposition["debug"],
+                }
+            else:
+                context_expansion = self._expand_question_context(
+                    question_text=question_text,
+                    unit_index=index,
+                    units=units,
+                    segment_lookup=segment_lookup,
+                )
+                if context_expansion["question_units"]:
+                    question_units = list(context_expansion["question_units"])
+                    question_text = str(context_expansion["question_text"])
 
-            question_support = self._score_question_context(unit)
+            question_support = self._score_question_context(candidate_unit)
             raw_question_score = self._clamp(
                 float(question_evaluation["question_score"])
-                + question_support["score_delta"],
+                + question_support["score_delta"]
+                + float(question_span_integrity["score_delta"]),
             )
             didactic_question_score = self._score_didactic_question_usefulness(
                 question_evaluation=question_evaluation,
@@ -1840,6 +3638,7 @@ class QAPairExtractor:
             reason_codes = list(question_evaluation["reason_codes"])
             reason_codes.append(extraction_reason)
             reason_codes.extend(question_support["reason_codes"])
+            reason_codes.extend(question_span_integrity["reason_codes"])
             reason_codes.extend(context_expansion["reason_codes"])
             preamble_text = extracted.question_preamble or ""
             if (
@@ -1867,9 +3666,9 @@ class QAPairExtractor:
 
             candidates.append(
                 QuestionCandidate(
-                    question_candidate_id=f"question_{index + 1:04d}",
-                    unit_index=index,
-                    unit=unit,
+                    question_candidate_id=f"question_{candidate_index + 1:04d}",
+                    unit_index=candidate_index,
+                    unit=candidate_unit,
                     question_units=list(question_units),
                     question_text=question_text,
                     question_unit_ids=self._ordered_union(
@@ -1907,13 +3706,16 @@ class QAPairExtractor:
                             "normalized_question_text"
                         ],
                         "token_count": question_evaluation["token_count"],
-                        "raw_unit_text": unit.text,
+                        "raw_unit_text": candidate_unit.text,
                         "raw_question_score": raw_question_score,
                         "didactic_question_score": didactic_question_score,
                         "question_context_expanded": bool(
                             context_expansion["question_units"],
                         ),
                         "question_expansion_debug": context_expansion["debug"],
+                        "question_span_integrity_debug": question_span_integrity[
+                            "debug"
+                        ],
                         "intra_sentence_qa": extracted.intra_sentence_qa,
                         "question_preamble": extracted.question_preamble,
                         "question_context_debug": question_support["debug"],
@@ -1922,6 +3724,294 @@ class QAPairExtractor:
                 ),
             )
         return candidates
+
+    def _allows_missing_terminal_preamble_recovery(
+        self, preamble_text: str | None
+    ) -> bool:
+        """Return whether a missing-terminal focus was already at a question break."""
+
+        normalized_preamble = normalize_rule_text(preamble_text or "").strip(" ,;.")
+        if not normalized_preamble:
+            return True
+        if normalized_preamble.endswith(":") or normalized_preamble.endswith("?"):
+            return True
+        bridge_tails = (
+            "cioe",
+            "cioè",
+            "that is",
+            "i mean",
+            "meaning",
+            "in other words",
+        )
+        if normalized_preamble.endswith(bridge_tails):
+            return True
+        tail_tokens = normalized_preamble.split()[-4:]
+        tail = " ".join(tail_tokens)
+        return "la domanda" in tail or "the question" in tail
+
+    def _has_same_or_adjacent_answer_window(
+        self,
+        *,
+        unit_index: int,
+        units: Sequence[_ExtractionUnit],
+        local_answer_seed: str | None,
+    ) -> bool:
+        """Return whether an implicit recovered question has a local answer slot."""
+
+        if local_answer_seed and self._is_plausible_answer_text(local_answer_seed):
+            return True
+        next_index = unit_index + 1
+        if next_index >= len(units):
+            return False
+        current_unit = units[unit_index]
+        next_unit = units[next_index]
+        if current_unit.audio_source_id != next_unit.audio_source_id:
+            return False
+        gap_seconds = max(0.0, next_unit.start_seconds - current_unit.end_seconds)
+        if gap_seconds > self.config.question_context_max_gap_seconds:
+            return False
+        return self._is_plausible_answer_text(next_unit.text)
+
+    def _previous_unit_has_nonhead_interrogative_cue(
+        self, *, unit_index: int, units: Sequence[_ExtractionUnit]
+    ) -> bool:
+        """Return whether the previous adjacent unit looks like a cue-list setup."""
+
+        if unit_index <= 0:
+            return False
+        current_unit = units[unit_index]
+        previous_unit = units[unit_index - 1]
+        if current_unit.audio_source_id != previous_unit.audio_source_id:
+            return False
+        gap_seconds = max(0.0, current_unit.start_seconds - previous_unit.end_seconds)
+        if gap_seconds > self.config.question_context_max_gap_seconds:
+            return False
+        previous_text = previous_unit.text.strip()
+        if "?" in previous_text:
+            return False
+        normalized_previous = normalize_rule_text(previous_text)
+        if self._has_head_interrogative_cue(normalized_previous):
+            return False
+        return bool(
+            collect_rule_matches(normalized_previous, QUESTION_CUE_RULES)
+            or collect_rule_matches(normalized_previous, DIDACTIC_QUESTION_RULES)
+        )
+
+    def _has_missing_terminal_local_support(
+        self,
+        *,
+        unit_index: int,
+        units: Sequence[_ExtractionUnit],
+        local_answer_seed: str | None,
+        question_text: str,
+    ) -> bool:
+        """Return whether recovered missing-terminal text has a local answer break."""
+
+        if not self._has_same_or_adjacent_answer_window(
+            unit_index=unit_index,
+            units=units,
+            local_answer_seed=local_answer_seed,
+        ):
+            return False
+        if self._previous_unit_has_nonhead_interrogative_cue(
+            unit_index=unit_index, units=units
+        ):
+            return False
+        answer_text = local_answer_seed
+        next_unit = units[unit_index + 1] if unit_index + 1 < len(units) else None
+        if not answer_text and next_unit is not None:
+            answer_text = next_unit.text
+        if not answer_text:
+            return False
+        if self._starts_with_additive_continuation(answer_text):
+            return False
+        if self._has_question_cue_with_focus_overlap(question_text, answer_text):
+            return False
+        if next_unit is None:
+            return True
+        gap_seconds = max(0.0, next_unit.start_seconds - units[unit_index].end_seconds)
+        if gap_seconds >= 0.35:
+            return True
+        current_terminal = units[unit_index].text.rstrip().endswith((".", "!", ";", ":"))
+        return current_terminal or not self._looks_like_incomplete_answer_span(answer_text)
+
+    def _recompose_split_question_span(
+        self,
+        *,
+        focus_question_text: str,
+        focus_unit_index: int,
+        units: Sequence[_ExtractionUnit],
+        segment_lookup: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        """Return a short same-turn span when a question is split across units."""
+
+        focus_unit = units[focus_unit_index]
+        normalized_focus = normalize_rule_text(focus_question_text)
+        focus_token_count = count_tokens(normalized_focus)
+        focus_has_head = self._has_autonomous_question_head(normalized_focus)
+        focus_cue_index = self._first_question_cue_token_index(normalized_focus)
+        missing_terminal_focus = "?" not in focus_question_text
+        if self._is_contextual_question(focus_question_text):
+            return None
+        if (
+            not focus_has_head
+            and not missing_terminal_focus
+            and focus_cue_index is None
+        ):
+            return None
+        if (
+            missing_terminal_focus
+            and not focus_has_head
+            and (focus_cue_index is None or focus_cue_index > 8)
+        ):
+            return None
+        if missing_terminal_focus and normalized_focus.split(maxsplit=1)[0] in {
+            "quanto",
+            "quanta",
+            "quanti",
+            "quante",
+        }:
+            return None
+        if focus_token_count < 2:
+            return None
+
+        preceding_units: list[_ExtractionUnit] = []
+        if not (missing_terminal_focus and not focus_has_head):
+            cursor = focus_unit_index - 1
+            while cursor >= 0 and len(preceding_units) < 2:
+                candidate_unit = units[cursor]
+                if not self._can_recompose_question_units(
+                    candidate_unit,
+                    preceding_units[0] if preceding_units else focus_unit,
+                    segment_lookup=segment_lookup,
+                    require_known_speaker=not missing_terminal_focus,
+                    require_shared_utterance=False,
+                ):
+                    break
+                if not self._is_split_question_setup_unit(candidate_unit):
+                    break
+                preceding_units.insert(0, candidate_unit)
+                cursor -= 1
+        if preceding_units:
+            question_units = preceding_units + [focus_unit]
+            return {
+                "question_text": self._join_text(
+                    unit.text if unit is not focus_unit else focus_question_text
+                    for unit in question_units
+                ),
+                "question_units": question_units,
+                "focus_position": "last",
+                "debug": {
+                    "expanded": True,
+                    "strategy": "split_question_focus_last",
+                    "span_unit_count": len(question_units),
+                    "focus_text_id": focus_unit.text_id,
+                    "setup_text_ids": [unit.text_id for unit in preceding_units],
+                },
+            }
+
+        if missing_terminal_focus and focus_has_head:
+            return None
+
+        following_units: list[_ExtractionUnit] = []
+        cursor = focus_unit_index + 1
+        while cursor < len(units) and len(following_units) < 2:
+            candidate_unit = units[cursor]
+            previous_unit = following_units[-1] if following_units else focus_unit
+            if not self._can_recompose_question_units(
+                previous_unit,
+                candidate_unit,
+                segment_lookup=segment_lookup,
+                require_known_speaker=not missing_terminal_focus,
+                require_shared_utterance=not missing_terminal_focus,
+            ):
+                break
+            if not self._is_split_question_setup_unit(candidate_unit):
+                break
+            following_units.append(candidate_unit)
+            cursor += 1
+        if following_units:
+            question_units = [focus_unit] + following_units
+            return {
+                "question_text": self._join_text(
+                    focus_question_text if unit is focus_unit else unit.text
+                    for unit in question_units
+                ),
+                "question_units": question_units,
+                "focus_position": "first",
+                "debug": {
+                    "expanded": True,
+                    "strategy": "split_question_focus_first",
+                    "span_unit_count": len(question_units),
+                    "focus_text_id": focus_unit.text_id,
+                    "setup_text_ids": [unit.text_id for unit in following_units],
+                },
+            }
+
+        return None
+
+    def _can_recompose_question_units(
+        self,
+        left_unit: _ExtractionUnit,
+        right_unit: _ExtractionUnit,
+        *,
+        segment_lookup: dict[str, Any],
+        require_known_speaker: bool,
+        require_shared_utterance: bool,
+    ) -> bool:
+        """Return whether two adjacent units look like one logical speaker turn."""
+
+        if left_unit.audio_source_id != right_unit.audio_source_id:
+            return False
+        gap_seconds = max(0.0, right_unit.start_seconds - left_unit.end_seconds)
+        if gap_seconds > self.config.question_context_max_gap_seconds:
+            return False
+        shared_utterance = bool(
+            set(left_unit.source_utterance_ids).intersection(
+                right_unit.source_utterance_ids,
+            ),
+        )
+        if require_shared_utterance:
+            return shared_utterance
+        left_speaker = str(left_unit.speaker_id or "").strip()
+        right_speaker = str(right_unit.speaker_id or "").strip()
+        if left_speaker and right_speaker:
+            return left_speaker == right_speaker
+        if require_known_speaker:
+            return False
+        if shared_utterance:
+            return True
+        segment_relation = self._segment_relation(
+            question_segment_ids=self._resolve_segment_ids_for_unit(
+                unit=left_unit,
+                segment_lookup=segment_lookup,
+            ),
+            answer_segment_ids=self._resolve_segment_ids_for_unit(
+                unit=right_unit,
+                segment_lookup=segment_lookup,
+            ),
+            segment_position_by_id=segment_lookup["segment_position_by_id"],
+        )
+        return segment_relation in {"same_segment", "next_segment", "segment_unknown"}
+
+    def _is_split_question_setup_unit(self, unit: _ExtractionUnit) -> bool:
+        """Return whether a unit can be structural setup inside a split question."""
+
+        normalized_text = normalize_rule_text(unit.text)
+        if not normalized_text or "?" in unit.text:
+            return False
+        token_count = count_tokens(normalized_text)
+        if token_count < 3 or token_count > 24:
+            return False
+        if self._has_autonomous_question_head(normalized_text):
+            return False
+        if collect_rule_matches(normalized_text, DIDACTIC_QUESTION_RULES):
+            return False
+        if self._has_poll_or_backchannel_noise(normalized_text):
+            return False
+        if self._is_procedural_question_request(normalized_text):
+            return False
+        return True
 
     def _extract_question_parts(self, text: str) -> _QuestionExtraction | None:
         """Extract the most plausible local question text and same-unit answer seed."""
@@ -1935,9 +4025,21 @@ class QAPairExtractor:
         for sentence, _, sentence_end in self._sentence_spans(cleaned_text):
             if "?" not in sentence:
                 continue
+            original_question_token_count = count_tokens(normalize_rule_text(sentence))
             question_text, question_preamble = self._refine_question_focus(
                 sentence.strip(),
             )
+            refined_question_token_count = count_tokens(normalize_rule_text(question_text))
+            extraction_reason = "question_sentence_extracted"
+            if (
+                original_question_token_count > 24
+                or (
+                    question_preamble
+                    and original_question_token_count >= 18
+                    and refined_question_token_count < original_question_token_count
+                )
+            ):
+                extraction_reason = "runon_question_candidate"
             trailing_text = cleaned_text[sentence_end:].strip() or None
             if trailing_text and self._starts_with_contextual_question(trailing_text):
                 trailing_spans = self._sentence_spans(trailing_text)
@@ -1955,7 +4057,7 @@ class QAPairExtractor:
                 extraction = _QuestionExtraction(
                     question_text=question_text,
                     local_answer_seed=trailing_text,
-                    extraction_reason="question_sentence_extracted",
+                    extraction_reason=extraction_reason,
                     question_preamble=question_preamble,
                     intra_sentence_qa=bool(trailing_text),
                 )
@@ -1984,16 +4086,88 @@ class QAPairExtractor:
 
         for sentence, _, sentence_end in self._sentence_spans(cleaned_text):
             if self._has_strong_question_signal(sentence):
+                question_text, question_preamble, inline_answer_seed = (
+                    self._refine_implicit_question_focus(sentence.strip())
+                )
                 trailing_text = cleaned_text[sentence_end:].strip() or None
                 return _QuestionExtraction(
-                    question_text=sentence.strip(),
-                    local_answer_seed=trailing_text,
+                    question_text=question_text,
+                    local_answer_seed=inline_answer_seed or trailing_text,
                     extraction_reason="cue_sentence_extracted",
-                    question_preamble=None,
-                    intra_sentence_qa=bool(trailing_text),
+                    question_preamble=question_preamble,
+                    intra_sentence_qa=bool(inline_answer_seed or trailing_text),
                 )
 
         return None
+
+    def _refine_implicit_question_focus(
+        self,
+        question_text: str,
+    ) -> tuple[str, str | None, str | None]:
+        """Return a focused implicit question plus preamble/inline answer seed."""
+
+        cleaned_question = question_text.strip()
+        normalized_question = normalize_rule_text(cleaned_question)
+        if "?" in cleaned_question:
+            return cleaned_question, None, None
+        if _DIRECT_DEFINITION_REQUEST_RE.match(normalized_question):
+            return cleaned_question, None, None
+        if self._is_followup_prompt_text(normalized_question):
+            return cleaned_question, None, None
+
+        didactic_intro_match = re.search(
+            r"(?P<preamble>.+?\b(?:la\s+mia\s+domanda|la\s+domanda)\b.+?"
+            r"(?:\be|è)\s+)(?P<focus>.+)$",
+            cleaned_question,
+            flags=re.IGNORECASE,
+        )
+        if didactic_intro_match:
+            focus = didactic_intro_match.group("focus").strip(" ,")
+            preamble = didactic_intro_match.group("preamble").strip(" ,")
+            if count_tokens(normalize_rule_text(focus)) >= 4:
+                inline_answer_seed = None
+                answer_split = re.search(
+                    r"(?P<focus>.+?\b(?:risponderesti|answer|respond)\b)"
+                    r"(?P<answer>\s+(?:ok|okay|well|so|allora|in\s+generale)\b.+)$",
+                    focus,
+                    flags=re.IGNORECASE,
+                )
+                if answer_split:
+                    focus = answer_split.group("focus").strip(" ,")
+                    inline_answer_seed = answer_split.group("answer").strip(" ,")
+                focus = focus[0].upper() + focus[1:] if focus else focus
+                return focus, preamble or None, inline_answer_seed
+
+        focus_match = re.search(
+            r"(?P<preamble>.+?)(?P<focus>\b(?:"
+            r"how|what|where|why|when|which|who|"
+            r"come|cosa|dove|perche|perché|quale|quali|quanto|quanta|quanti|quante"
+            r")\b.+)$",
+            cleaned_question,
+            flags=re.IGNORECASE,
+        )
+        if focus_match:
+            focus = focus_match.group("focus").strip(" ,")
+            preamble = focus_match.group("preamble").strip(" ,")
+            normalized_preamble = normalize_rule_text(preamble)
+            normalized_focus = normalize_rule_text(focus)
+            if (
+                preamble
+                and (
+                    normalized_preamble.endswith(("cioe", "cioè", "that is", "i.e"))
+                    or " la domanda" in f" {normalized_preamble}"
+                    or " the question" in f" {normalized_preamble}"
+                )
+                and count_tokens(normalized_focus) >= 3
+                and not any(
+                    pattern.search(normalized_focus)
+                    for pattern in DECLARATIVE_WHAT_PATTERNS
+                )
+            ):
+                focus = focus[0].upper() + focus[1:] if focus else focus
+                return focus, preamble or None, None
+
+        return cleaned_question, None, None
 
     def _refine_question_focus(self, question_text: str) -> tuple[str, str | None]:
         """Return a focused question clause plus any useful preamble text."""
@@ -2057,6 +4231,7 @@ class QAPairExtractor:
             DIDACTIC_QUESTION_RULES,
         )
         has_question_mark = "?" in question_text
+        direct_request = bool(_DIRECT_DEFINITION_REQUEST_RE.match(normalized_text))
         if (
             not has_question_mark
             and any(pattern.search(normalized_text) for pattern in DECLARATIVE_WHAT_PATTERNS)
@@ -2067,7 +4242,12 @@ class QAPairExtractor:
             and self._is_causal_declarative_statement(normalized_text)
         ):
             return None
-        if not has_question_mark and not question_matches and not didactic_matches:
+        if (
+            not has_question_mark
+            and not question_matches
+            and not didactic_matches
+            and not direct_request
+        ):
             return None
 
         token_count = count_tokens(normalized_text)
@@ -2150,13 +4330,27 @@ class QAPairExtractor:
             question_score += didactic_score
             reason_codes.extend(match.reason_code for match in didactic_matches)
 
+        if direct_request:
+            question_score += 0.18
+            reason_codes.append("direct_definition_request")
+
         if self._starts_with_interrogative_word(normalized_text):
             question_score += 0.12
             reason_codes.append("starts_with_interrogative")
 
-        if not has_question_mark and (question_matches or didactic_matches):
+        if not has_question_mark and (question_matches or didactic_matches or direct_request):
             question_score += 0.10
             reason_codes.append("implicit_question_cue")
+            terminal_signals = self._question_without_terminal_mark_signals(
+                normalized_text=normalized_text,
+                question_matches=question_matches,
+                didactic_matches=didactic_matches,
+                token_count=token_count,
+            )
+            if terminal_signals["recoverable"]:
+                question_score += 0.06
+                reason_codes.append("question_without_terminal_mark_recovered")
+                reason_codes.extend(terminal_signals["reason_codes"])
 
         if 3 <= token_count <= 24:
             question_score += 0.08
@@ -2172,6 +4366,8 @@ class QAPairExtractor:
             question_type = didactic_matches[0].label
         elif question_matches:
             question_type = question_matches[0].label
+        elif direct_request:
+            question_type = "direct_request"
         elif has_question_mark:
             question_type = "direct_question"
 
@@ -2186,6 +4382,61 @@ class QAPairExtractor:
             "token_count": token_count,
             "question_intent_debug": intent_evaluation["debug"],
         }
+
+    def _question_without_terminal_mark_signals(
+        self,
+        *,
+        normalized_text: str,
+        question_matches: Sequence[Any],
+        didactic_matches: Sequence[Any],
+        token_count: int,
+    ) -> dict[str, Any]:
+        """Return structural evidence for recovering a missing question mark."""
+
+        stripped = normalized_text.rstrip(" ?.!").strip()
+        if not stripped:
+            return {"recoverable": False, "reason_codes": []}
+
+        first_token = stripped.split(maxsplit=1)[0]
+        if first_token in {"quanto", "quanta", "quanti", "quante"}:
+            return {"recoverable": False, "reason_codes": []}
+
+        has_head_cue = self._has_head_interrogative_cue(stripped)
+        direct_request = bool(_DIRECT_DEFINITION_REQUEST_RE.match(stripped))
+        if not has_head_cue and not direct_request:
+            return {"recoverable": False, "reason_codes": []}
+
+        signal_reasons: list[str] = []
+        if question_matches or didactic_matches:
+            signal_reasons.append("missing_terminal_interrogative_cue")
+        if has_head_cue:
+            signal_reasons.append("missing_terminal_autonomous_head")
+        if direct_request:
+            signal_reasons.append("missing_terminal_direct_request")
+        if 3 <= token_count <= 24:
+            signal_reasons.append("missing_terminal_plausible_length")
+        if not normalized_text.endswith((".", "!", "?")):
+            signal_reasons.append("missing_terminal_punctuation_absent")
+
+        return {
+            "recoverable": len(signal_reasons) >= 2,
+            "reason_codes": self._unique_strings(signal_reasons),
+        }
+
+    def _has_head_interrogative_cue(self, text: str) -> bool:
+        """Return whether the interrogative cue is at the focus head."""
+
+        stripped = self._strip_leading_question_discourse_markers(
+            normalize_rule_text(text).rstrip(" ?!.").strip()
+        )
+        if not stripped:
+            return False
+        if _DIRECT_DEFINITION_REQUEST_RE.match(stripped):
+            return True
+        if self._starts_with_interrogative_word(stripped):
+            return True
+        first_word = stripped.split(maxsplit=1)[0].split("'", maxsplit=1)[0]
+        return first_word in _AUXILIARY_QUESTION_START_WORDS
 
     @staticmethod
     def _is_low_autonomy_implicit_question(reason_codes: Sequence[str]) -> bool:
@@ -2207,6 +4458,14 @@ class QAPairExtractor:
             "question_continuation_risk",
             "intra_sentence_qa",
         }
+        if "split_question_recomposed" in reason_set:
+            strong_split_blockers = {
+                "question_low_sentence_autonomy",
+                "question_low_boundary_confidence",
+                "question_continuation_risk",
+                "intra_sentence_qa",
+            }
+            return bool(reason_set & strong_split_blockers)
         return bool(reason_set & weak_structure_reasons)
 
     def _expand_question_context(
@@ -2443,6 +4702,230 @@ class QAPairExtractor:
                 "score_delta": round(score_delta, 4),
             },
         }
+
+    def _question_span_integrity_signal(
+        self,
+        *,
+        unit_text: str,
+        question_text: str,
+        question_preamble: str | None,
+    ) -> dict[str, Any]:
+        """Return a light penalty when the question focus starts mid-sentence."""
+
+        if not question_preamble:
+            return {
+                "score_delta": 0.0,
+                "reason_codes": [],
+                "debug": {"status": "whole_sentence_or_clean_boundary"},
+            }
+
+        unit_text = unit_text.strip()
+        question_text = question_text.strip()
+        if not unit_text or not question_text:
+            return {
+                "score_delta": 0.0,
+                "reason_codes": [],
+                "debug": {"status": "empty_text"},
+            }
+
+        question_start = unit_text.lower().find(question_text.lower())
+        preceding_text = unit_text[:question_start].strip() if question_start >= 0 else ""
+        preamble_text = question_preamble.strip()
+        boundary_text = preceding_text or preamble_text
+        normalized_boundary = normalize_rule_text(boundary_text).rstrip()
+        if not boundary_text:
+            return {
+                "score_delta": 0.0,
+                "reason_codes": [],
+                "debug": {"status": "boundary_at_start"},
+            }
+        if boundary_text.endswith((".", "?", "!", ";", ":")):
+            return {
+                "score_delta": 0.0,
+                "reason_codes": [],
+                "debug": {"status": "terminal_boundary_before_focus"},
+            }
+        if normalized_boundary.endswith(
+            (
+                "the question is",
+                "the question",
+                "la domanda e",
+                "la domanda",
+                "cioe",
+                "cioè",
+                "that is",
+                "i mean",
+                "meaning",
+                "in other words",
+            ),
+        ):
+            return {
+                "score_delta": 0.0,
+                "reason_codes": [],
+                "debug": {"status": "didactic_or_bridge_boundary"},
+            }
+
+        return {
+            "score_delta": -0.10,
+            "reason_codes": ["question_span_integrity_penalty"],
+            "debug": {
+                "status": "focus_starts_inside_sentence",
+                "preamble_token_count": count_tokens(normalized_boundary),
+            },
+        }
+
+    def _annotate_answer_boundary(
+        self,
+        *,
+        answer: _AnswerCandidate,
+        question: QuestionCandidate,
+        units: Sequence[_ExtractionUnit],
+        question_by_index: dict[int, QuestionCandidate],
+        segment_lookup: dict[str, Any],
+        at_search_window_boundary: bool,
+    ) -> None:
+        """Annotate answer spans that stop at a likely unfinished boundary."""
+
+        if self._answer_has_terminal_punctuation(answer.answer_text):
+            answer.search_signals["answer_boundary_status"] = "terminal"
+            return
+        continuation_unit = self._next_answer_continuation_unit(
+            question=question,
+            answer_units=answer.answer_units,
+            units=units,
+            question_by_index=question_by_index,
+            segment_lookup=segment_lookup,
+        )
+        if continuation_unit is not None:
+            answer.search_signals["answer_boundary_status"] = "continuation_available"
+            answer.search_signals["answer_boundary_next_text_id"] = (
+                continuation_unit.text_id
+            )
+            return
+        if at_search_window_boundary:
+            answer.search_signals["answer_boundary_status"] = "truncated"
+            answer.search_signals["answer_boundary_reason"] = "search_window_boundary"
+            answer.reason_codes = self._unique_strings(
+                list(answer.reason_codes) + ["answer_truncated_at_boundary"],
+            )
+
+    def _build_answer_completion_candidate(
+        self,
+        *,
+        question: QuestionCandidate,
+        answer_units: Sequence[_ExtractionUnit],
+        units: Sequence[_ExtractionUnit],
+        question_by_index: dict[int, QuestionCandidate],
+        distance_units: int,
+        segment_lookup: dict[str, Any],
+    ) -> _AnswerCandidate | None:
+        """Return the answer span plus one continuation sentence when available."""
+
+        continuation_unit = self._next_answer_continuation_unit(
+            question=question,
+            answer_units=answer_units,
+            units=units,
+            question_by_index=question_by_index,
+            segment_lookup=segment_lookup,
+        )
+        if continuation_unit is None:
+            return None
+        completed_units = list(answer_units) + [continuation_unit]
+        if len(completed_units) > self.config.max_answer_units:
+            return None
+        candidate = self._build_answer_candidate_from_units(
+            question=question,
+            answer_units=completed_units,
+            distance_units=distance_units,
+            segment_lookup=segment_lookup,
+        )
+        if candidate is None:
+            return None
+        candidate.reason_codes = self._unique_strings(
+            list(candidate.reason_codes) + ["answer_span_completion_support"],
+        )
+        candidate.search_signals["answer_boundary_status"] = "completed_by_next_sentence"
+        candidate.search_signals["answer_boundary_next_text_id"] = continuation_unit.text_id
+        candidate.metadata.setdefault("search_debug", {})[
+            "answer_completion_extended_by"
+        ] = continuation_unit.text_id
+        return candidate
+
+    def _next_answer_continuation_unit(
+        self,
+        *,
+        question: QuestionCandidate,
+        answer_units: Sequence[_ExtractionUnit],
+        units: Sequence[_ExtractionUnit],
+        question_by_index: dict[int, QuestionCandidate],
+        segment_lookup: dict[str, Any],
+    ) -> _ExtractionUnit | None:
+        """Return the next unit when it structurally continues the answer."""
+
+        if not answer_units:
+            return None
+        last_unit = answer_units[-1]
+        next_index = last_unit.index + 1
+        if next_index >= len(units) or next_index in question_by_index:
+            return None
+        next_unit = units[next_index]
+        if next_unit.audio_source_id != last_unit.audio_source_id:
+            return None
+        if self._answer_has_terminal_punctuation(last_unit.text):
+            return None
+        if not self._can_use_answer_units(
+            question=question,
+            answer_units=list(answer_units) + [next_unit],
+            segment_lookup=segment_lookup,
+        ):
+            return None
+        if self._units_duration_seconds(list(answer_units) + [next_unit]) > (
+            self.config.max_answer_duration_seconds
+        ):
+            return None
+        if self._has_strong_question_signal(next_unit.text):
+            return None
+        if self._is_poll_or_backchannel_answer(normalize_rule_text(next_unit.text)):
+            return None
+        return next_unit if self._looks_like_sentence_continuation(last_unit, next_unit) else None
+
+    def _looks_like_sentence_continuation(
+        self,
+        previous_unit: _ExtractionUnit,
+        next_unit: _ExtractionUnit,
+    ) -> bool:
+        """Return whether two units look like one unfinished sentence."""
+
+        previous_text = previous_unit.text.strip()
+        next_text = next_unit.text.strip()
+        if not previous_text or not next_text:
+            return False
+        if previous_text.endswith((",", ";", ":")):
+            return True
+        normalized_next = normalize_rule_text(next_text)
+        if re.match(
+            r"^(?:"
+            r"and|but|or|so|because|that|which|who|where|when|if|then|also|"
+            r"e|ed|ma|o|oppure|perche|perché|che|quindi|quando|se|anche|poi"
+            r")\b",
+            normalized_next,
+        ):
+            return True
+        first_character = next_text[0]
+        if first_character.islower():
+            return True
+        previous_speaker = str(previous_unit.speaker_id or "").strip()
+        next_speaker = str(next_unit.speaker_id or "").strip()
+        if previous_speaker and next_speaker and previous_speaker != next_speaker:
+            return False
+        gap_seconds = max(0.0, next_unit.start_seconds - previous_unit.end_seconds)
+        return gap_seconds <= 0.35
+
+    @staticmethod
+    def _answer_has_terminal_punctuation(text: str) -> bool:
+        """Return whether an answer span ends on strong terminal punctuation."""
+
+        return text.rstrip().endswith((".", "?", "!"))
 
     def _build_same_unit_answer_candidate(
         self,
@@ -2880,6 +5363,21 @@ class QAPairExtractor:
         )
         score += answer_responsiveness["score_delta"]
         reason_codes.extend(answer_responsiveness["reason_codes"])
+        if "runon_question_candidate" in question.reason_codes:
+            responsiveness_debug = answer_responsiveness.get("debug", {})
+            responsiveness_score = self._safe_float(responsiveness_debug.get("score"))
+            if (
+                answer.distance_units == 1
+                and responsiveness_score is not None
+                and responsiveness_score >= 0.48
+                and not bool(responsiveness_debug.get("followup_prompt_answer"))
+                and not self._is_answer_question_like(answer.answer_text)
+            ):
+                partial_scores["runon_question_local_answer"] = 0.06
+                score += partial_scores["runon_question_local_answer"]
+                reason_codes.append("runon_question_local_answer")
+            else:
+                partial_scores["runon_question_local_answer"] = 0.0
 
         span_support = self._score_answer_span_completeness(
             question=question,
@@ -2973,6 +5471,20 @@ class QAPairExtractor:
         partial_scores["answer_context"] = float(answer_context["score_delta"])
         score += answer_context["score_delta"]
         reason_codes.extend(answer_context["reason_codes"])
+
+        boundary_status = str(answer.search_signals.get("answer_boundary_status") or "")
+        if (
+            self.config.pipeline_profile == "quality_local"
+            and not self._answer_has_terminal_punctuation(answer.answer_text)
+            and "answer_meta_opening_trimmed" not in reason_codes
+            and "answer_trailing_tag_trimmed" not in reason_codes
+            and boundary_status
+            not in {"continuation_available", "completed_by_next_sentence"}
+            and search_result.stop_reason in {"window_exhausted", "answer_span_limit"}
+        ):
+            answer.search_signals["answer_boundary_status"] = "truncated"
+            answer.search_signals["answer_boundary_reason"] = search_result.stop_reason
+            reason_codes.append("answer_truncated_at_boundary")
 
         quality_gate = self._score_answer_quality_gate(question, answer)
         partial_scores["quality_gate"] = float(quality_gate["score_delta"])
@@ -3284,9 +5796,17 @@ class QAPairExtractor:
             score_delta -= 0.26
             reason_codes.append("answer_boilerplate_penalty")
 
+        if self._is_poll_or_backchannel_answer(normalized_answer):
+            score_delta -= 0.34
+            reason_codes.append("answer_poll_or_backchannel_penalty")
+
         if self._is_question_continuation_answer(normalized_answer):
             score_delta -= 0.24
             reason_codes.append("question_continuation_answer_penalty")
+
+        if self._is_additive_continuation_answer(question, answer):
+            score_delta -= 0.14
+            reason_codes.append("additive_continuation_answer_penalty")
 
         if answer.distance_units == 0 and answer.answer_sentence_ids and set(
             answer.answer_sentence_ids,
@@ -3347,6 +5867,10 @@ class QAPairExtractor:
             score_delta -= 0.10
             reason_codes.append("incomplete_answer_span_penalty")
 
+        if answer.search_signals.get("answer_boundary_status") == "truncated":
+            score_delta -= 0.16
+            reason_codes.append("answer_truncated_at_boundary_penalty")
+
         cue_alignment = self._question_answer_alignment(
             question_text=question.question_text,
             answer_text=answer.answer_text,
@@ -3371,6 +5895,17 @@ class QAPairExtractor:
             score_delta -= 0.18
             reason_codes.append("surface_answer_cue_penalty")
 
+        deflection_debug = self._deflection_answer_debug(
+            question=question,
+            answer=answer,
+            shared_keywords=shared_keywords,
+            shared_numbers=cue_alignment.get("shared_numbers") or [],
+            answer_cue_score=answer_cue_score,
+        )
+        if deflection_debug["is_deflection"]:
+            score_delta -= 0.42
+            reason_codes.append("deflection_answer_penalty")
+
         if (
             self.config.pipeline_profile == "quality_local"
             and answer.search_signals.get("candidate_channel") == "deferred_answer_search"
@@ -3387,8 +5922,67 @@ class QAPairExtractor:
                 "overlap_ratio": round(overlap_ratio, 4),
                 "question_coverage_ratio": round(question_coverage_ratio, 4),
                 "socratic_short_answer": socratic_short_answer,
+                "deflection_answer": deflection_debug,
                 "score_delta": round(score_delta, 4),
             },
+        }
+
+    def _deflection_answer_debug(
+        self,
+        *,
+        question: QuestionCandidate,
+        answer: _AnswerCandidate,
+        shared_keywords: Sequence[str],
+        shared_numbers: Sequence[str],
+        answer_cue_score: float,
+    ) -> dict[str, Any]:
+        """Return structural deflection evidence for short course-meta answers."""
+
+        normalized_answer = normalize_rule_text(answer.answer_text)
+        answer_tokens = self._content_token_list(normalized_answer)
+        token_count = count_tokens(normalized_answer)
+        if not answer_tokens or token_count > 18:
+            return {
+                "is_deflection": False,
+                "token_count": token_count,
+                "reason": "length_or_empty",
+            }
+        if shared_keywords or shared_numbers or answer_cue_score > 0.0:
+            return {
+                "is_deflection": False,
+                "token_count": token_count,
+                "reason": "anchored_or_explanatory",
+            }
+        if self._is_socratic_short_answer_for_question(
+            question=question,
+            answer_text=answer.answer_text,
+        ):
+            return {
+                "is_deflection": False,
+                "token_count": token_count,
+                "reason": "socratic_short_answer",
+            }
+
+        token_set = set(answer_tokens)
+        meta_count = sum(1 for token in answer_tokens if token in _DEFLECTION_META_TOKENS)
+        dismissive_count = sum(
+            1 for token in answer_tokens if token in _DEFLECTION_DISMISSIVE_TOKENS
+        )
+        negated = bool(token_set & _NEGATION_TOKENS)
+        meta_ratio = meta_count / max(1, len(answer_tokens))
+        is_deflection = (
+            meta_count >= 1
+            and (dismissive_count >= 1 or negated)
+            and meta_ratio >= 0.20
+        )
+        return {
+            "is_deflection": is_deflection,
+            "token_count": token_count,
+            "meta_token_count": meta_count,
+            "dismissive_token_count": dismissive_count,
+            "meta_ratio": round(meta_ratio, 4),
+            "negated": negated,
+            "reason": "course_meta_no_anchor" if is_deflection else "insufficient_meta",
         }
 
     def _is_socratic_short_answer(self, *, question_text: str, answer_text: str) -> bool:
@@ -3524,7 +6118,10 @@ class QAPairExtractor:
 
         if len(answer.answer_units) > 1:
             signal_gain = full_signal_score - first_signal_score
-            if (
+            if "answer_span_completion_support" in answer.reason_codes:
+                score_delta += 0.12 if token_count <= 70 else 0.04
+                reason_codes.append("answer_span_completion_support")
+            elif (
                 full_has_signal
                 and token_count <= 70
                 and (signal_gain >= 0.08 or not first_has_signal)
@@ -3851,19 +6448,25 @@ class QAPairExtractor:
             answer.answer_segment_id,
             segment_lookup["segment_by_id"],
         )
+        trimmed_answer_text, internal_trim_debug = (
+            self._trim_internal_checkin_from_answer(
+                question_text=question.question_text,
+                answer_text=answer.answer_text,
+            )
+        )
+        if trimmed_answer_text != answer.answer_text:
+            answer.metadata["internal_checkin_trim"] = internal_trim_debug
+            answer.metadata["original_answer_text"] = answer.answer_text
+            answer.answer_text = trimmed_answer_text
+            answer.reason_codes = self._unique_strings(
+                list(answer.reason_codes) + ["answer_internal_checkin_trimmed"],
+            )
         context_extraction = self.extract_qa_context(
             question=question,
             answer=answer,
             units=units,
             search_result=search_result,
         )
-        quality_context_extraction = self._extract_qa_context_for_quality_gate(
-            question=question,
-            answer=answer,
-            units=units,
-            search_result=search_result,
-        )
-
         reason_codes = self._unique_strings(
             question.reason_codes + answer.reason_codes + [segment_relation],
         )
@@ -3887,7 +6490,7 @@ class QAPairExtractor:
         quality_features = self._build_candidate_quality_features(
             question=question,
             answer=answer,
-            context_extraction=quality_context_extraction,
+            context_extraction=context_extraction,
             confidence=confidence,
             input_layer=input_layer,
             segment_relation=segment_relation,
@@ -4188,164 +6791,6 @@ class QAPairExtractor:
             context_reasons=context_selection.reasons,
             candidate_context_count=context_selection.candidate_count,
         )
-
-    def _extract_qa_context_for_quality_gate(
-        self,
-        *,
-        question: QuestionCandidate,
-        answer: _AnswerCandidate,
-        units: Sequence[_ExtractionUnit],
-        search_result: _AnswerSearchResult,
-    ) -> _ContextExtraction:
-        """Return legacy context semantics used only to keep QA gating stable."""
-
-        context_units: list[_ExtractionUnit] = []
-        context_strategy: str | None = None
-        context_confidence: str | None = None
-
-        if answer.distance_units == 0 and question.local_answer_seed:
-            context_units = [question.unit]
-            context_strategy = "intra_sentence_context"
-            context_confidence = "high"
-        elif question.metadata.get("question_context_expanded"):
-            context_units = question.question_units[:-1] or question.question_units
-            context_strategy = "previous_sentence_context"
-            context_confidence = "high"
-        elif bool(search_result.metadata.get("deferred_answer_search_used")):
-            context_units = self._legacy_deferred_context_units_for_quality(
-                question,
-                answer,
-                units,
-            )
-            context_strategy = "deferred_answer_context"
-            context_confidence = "medium"
-        else:
-            context_units = self._legacy_local_context_units_for_quality(
-                question,
-                answer,
-                units,
-            )
-            context_strategy = "local_topic_window"
-            context_confidence = "medium"
-
-        context_units = self._dedupe_context_units(context_units, question, answer)
-        if not context_units:
-            context_units = self._legacy_fallback_context_units_for_quality(
-                question,
-                answer,
-                units,
-            )
-            context_strategy = "fallback_previous_context"
-            context_confidence = "low"
-
-        context_raw_text = self._build_context_raw_text(context_units)
-        context_text = self._summarize_context_text(
-            question=question,
-            answer=answer,
-            context_units=context_units,
-            context_raw_text=context_raw_text,
-            context_strategy=context_strategy,
-        )
-        if not context_text:
-            return _ContextExtraction(
-                context_text=None,
-                context_raw_text=None,
-                context_units=[],
-                context_strategy=None,
-                context_confidence=None,
-            )
-        return _ContextExtraction(
-            context_text=context_text,
-            context_raw_text=context_raw_text,
-            context_units=context_units,
-            context_sentence_ids=self._ordered_union(
-                unit.sentence_ids for unit in context_units
-            ),
-            context_source_utterance_ids=self._ordered_union(
-                unit.source_utterance_ids for unit in context_units
-            ),
-            context_strategy=context_strategy,
-            context_confidence=context_confidence,
-        )
-
-    def _legacy_local_context_units_for_quality(
-        self,
-        question: QuestionCandidate,
-        answer: _AnswerCandidate,
-        units: Sequence[_ExtractionUnit],
-    ) -> list[_ExtractionUnit]:
-        """Return the pre-context-v1 local context used for stable QA gating."""
-
-        context_units: list[_ExtractionUnit] = []
-        question_start_index = question.question_units[0].index
-        for candidate_index in range(max(0, question_start_index - 2), question_start_index):
-            candidate_unit = units[candidate_index]
-            if candidate_unit.audio_source_id != question.unit.audio_source_id:
-                continue
-            if self._unit_has_topic_overlap(question=question, unit=candidate_unit):
-                context_units.append(candidate_unit)
-        if not context_units and self._usable_question_preamble_context(question):
-            context_units.append(question.unit)
-        if answer.distance_units <= 1 and not context_units:
-            previous_index = max(0, question.unit_index - 1)
-            if previous_index != question.unit_index:
-                previous_unit = units[previous_index]
-                if previous_unit.audio_source_id == question.unit.audio_source_id:
-                    context_units.append(previous_unit)
-        return context_units
-
-    def _legacy_deferred_context_units_for_quality(
-        self,
-        question: QuestionCandidate,
-        answer: _AnswerCandidate,
-        units: Sequence[_ExtractionUnit],
-    ) -> list[_ExtractionUnit]:
-        """Return the pre-context-v1 deferred context used for stable QA gating."""
-
-        context_units: list[_ExtractionUnit] = []
-        question_start_index = question.question_units[0].index
-        answer_start_index = answer.answer_units[0].index
-        for candidate_index in range(max(0, question_start_index - 2), question.unit_index):
-            candidate_unit = units[candidate_index]
-            if candidate_unit.audio_source_id != question.unit.audio_source_id:
-                continue
-            if self._unit_has_topic_overlap(question=question, unit=candidate_unit):
-                context_units.append(candidate_unit)
-        for candidate_index in range(max(question.unit_index + 1, answer_start_index - 2), answer_start_index):
-            candidate_unit = units[candidate_index]
-            if candidate_unit.audio_source_id != question.unit.audio_source_id:
-                continue
-            if self._unit_has_topic_overlap(question=question, unit=candidate_unit):
-                context_units.append(candidate_unit)
-        if not context_units and self._usable_question_preamble_context(question):
-            context_units.append(question.unit)
-        return context_units
-
-    def _legacy_fallback_context_units_for_quality(
-        self,
-        question: QuestionCandidate,
-        answer: _AnswerCandidate,
-        units: Sequence[_ExtractionUnit],
-    ) -> list[_ExtractionUnit]:
-        """Return the pre-context-v1 fallback context used for stable QA gating."""
-
-        del answer
-        fallback_units: list[_ExtractionUnit] = []
-        question_start_index = question.question_units[0].index
-        for candidate_index in range(max(0, question_start_index - 2), question_start_index):
-            candidate_unit = units[candidate_index]
-            if candidate_unit.audio_source_id != question.unit.audio_source_id:
-                continue
-            if self._is_filler_or_boilerplate_answer(
-                normalize_rule_text(candidate_unit.text),
-            ):
-                continue
-            fallback_units.append(candidate_unit)
-        if fallback_units:
-            return fallback_units
-        if self._usable_question_preamble_context(question):
-            return [question.unit]
-        return []
 
     def _local_topic_context_units(
         self,
@@ -4971,6 +7416,8 @@ class QAPairExtractor:
             flags.append("quality_local_deferred")
         if "answer_boilerplate_penalty" in reason_codes:
             flags.append("answer_boilerplate")
+        if "deflection_answer_penalty" in reason_codes:
+            flags.append("deflection_answer")
         if "low_information_answer_penalty" in reason_codes:
             flags.append("low_information_answer")
         if "incomplete_answer_span_penalty" in reason_codes:
@@ -4979,6 +7426,12 @@ class QAPairExtractor:
             flags.append("surface_answer_cue")
         if "deferred_answer_too_broad_penalty" in reason_codes:
             flags.append("deferred_answer_too_broad")
+        if "answer_poll_or_backchannel_penalty" in reason_codes:
+            flags.append("answer_poll_or_backchannel")
+        if "answer_truncated_at_boundary_penalty" in reason_codes:
+            flags.append("answer_truncated_at_boundary")
+        if "question_span_integrity_penalty" in reason_codes:
+            flags.append("question_span_integrity")
         if "answer_responsiveness_weak" in reason_codes:
             flags.append("weak_answer_responsiveness")
         if "answer_responsiveness_followup_prompt" in reason_codes:
@@ -5056,6 +7509,13 @@ class QAPairExtractor:
             "answer_responsiveness_score": round(answer_responsiveness_score, 4),
             "context_quality_score": round(context_quality_score, 4),
             "grounding_quality_score": round(grounding_quality_score, 4),
+            "semantic_responsiveness_status": "disabled",
+            "semantic_responsiveness_score": None,
+            "semantic_question_answer_similarity": None,
+            "semantic_answer_continuation_similarity": None,
+            "semantic_echo_penalty": None,
+            "semantic_continuation_penalty": None,
+            "semantic_gate_penalty_applied": False,
             "risk_score": round(risk_score, 4),
             "final_quality_score": round(final_quality_score, 4),
             "quality_band": self._quality_band(final_quality_score),
@@ -5103,7 +7563,7 @@ class QAPairExtractor:
         context_text = context_extraction.context_text or ""
         context_tokens = self._content_tokens(context_text)
         if not context_tokens:
-            return False
+            return context_extraction.candidate_context_count > 0
         if len(context_tokens) <= 2:
             return True
         question_tokens = self._content_tokens(question.question_text)
@@ -5190,14 +7650,18 @@ class QAPairExtractor:
             "circular_answer_echo": 0.24,
             "same_sentence_without_answer_cue": 0.24,
             "answer_boilerplate": 0.24,
+            "answer_poll_or_backchannel": 0.30,
             "low_information_answer": 0.20,
             "incomplete_answer_span": 0.14,
+            "answer_truncated_at_boundary": 0.16,
+            "question_span_integrity": 0.14,
             "surface_answer_cue": 0.22,
             "weak_answer_responsiveness": 0.22,
             "followup_prompt_answer": 0.26,
             "thin_answer_reply": 0.18,
             "unanchored_quantity_answer": 0.20,
             "monologue_continuation_risk": 0.24,
+            "semantic_nonresponsive": 0.22,
             "deferred_answer_too_broad": 0.20,
             "quality_local_deferred": 0.14,
             "competing_question": 0.08,
@@ -5210,10 +7674,13 @@ class QAPairExtractor:
             "question_low_sentence_autonomy": "low_sentence_autonomy",
             "question_low_boundary_confidence": "low_boundary_confidence",
             "answer_boilerplate_penalty": "answer_boilerplate",
+            "answer_poll_or_backchannel_penalty": "answer_poll_or_backchannel",
             "same_sentence_without_answer_cue": "same_sentence_without_answer_cue",
             "premise_only_answer_penalty": "premise_only_answer",
             "moderator_handoff_answer_penalty": "moderator_handoff_answer",
             "incomplete_answer_span_penalty": "incomplete_answer_span",
+            "answer_truncated_at_boundary_penalty": "answer_truncated_at_boundary",
+            "question_span_integrity_penalty": "question_span_integrity",
             "surface_answer_cue_penalty": "surface_answer_cue",
             "answer_responsiveness_weak": "weak_answer_responsiveness",
             "answer_responsiveness_followup_prompt": "followup_prompt_answer",
@@ -5789,6 +8256,7 @@ class QAPairExtractor:
             "?" in text
             or collect_rule_matches(normalized_text, QUESTION_CUE_RULES)
             or collect_rule_matches(normalized_text, DIDACTIC_QUESTION_RULES)
+            or _DIRECT_DEFINITION_REQUEST_RE.match(normalized_text)
         )
 
     def _starts_with_contextual_question(self, text: str) -> bool:
@@ -5829,6 +8297,94 @@ class QAPairExtractor:
         if _CAUSAL_ANSWER_AFTER_WHY_RE.match(normalized_text):
             return False
         return self._starts_with_interrogative_word(normalized_text)
+
+    def _has_question_cue_with_focus_overlap(
+        self, question_text: str, answer_text: str
+    ) -> bool:
+        """Return whether answer text looks like the same question continuing."""
+
+        normalized_answer = normalize_rule_text(answer_text)
+        if not normalized_answer or normalized_answer.endswith("?"):
+            return False
+        if _CAUSAL_ANSWER_AFTER_WHY_RE.match(normalized_answer):
+            return False
+        if self._is_followup_prompt_answer(normalized_answer):
+            return False
+        continuation_focus = re.sub(
+            r"^(?:that\s+is|i\s+mean|meaning|in\s+other\s+words|cioe|cioè)[,;:]?\s+",
+            "",
+            normalized_answer,
+        )
+        if not self._has_question_continuation_cue_position(continuation_focus):
+            return False
+        normalized_question = normalize_rule_text(question_text)
+        question_tokens = set(self._content_tokens(normalized_question))
+        answer_tokens = set(self._content_tokens(normalized_answer))
+        if not question_tokens or not answer_tokens:
+            return False
+        shared_tokens = question_tokens & answer_tokens
+        if len(shared_tokens) >= 2:
+            return True
+        return bool(shared_tokens) and (len(shared_tokens) / max(1, len(question_tokens))) >= 0.25
+
+    def _has_question_continuation_cue_position(self, text: str) -> bool:
+        """Return whether interrogative syntax appears at continuation head."""
+
+        normalized_text = normalize_rule_text(text).rstrip(" ?.!;:").strip()
+        if not normalized_text:
+            return False
+        if self._has_head_interrogative_cue(normalized_text):
+            return True
+        tokens = re.findall(r"\b[\w']+\b", normalized_text)
+        interrogative_words = set(INTERROGATIVE_START_WORDS)
+        internal_ambiguous_words = {"because", "why", "perche", "perché", "che", "cosa", "what"}
+        for index, token in enumerate(tokens[:2]):
+            base_token = token.split("'", maxsplit=1)[0]
+            if token in internal_ambiguous_words or base_token in internal_ambiguous_words:
+                continue
+            if token in interrogative_words or base_token in interrogative_words:
+                return True
+        return False
+
+    def _is_answer_question_continuation_rejected(
+        self, *, question: QuestionCandidate, answer_text: str
+    ) -> bool:
+        """Return whether a local answer is still an unmarked question continuation."""
+
+        focus_text = str(
+            question.metadata.get("normalized_question_text")
+            or question.question_text
+            or ""
+        )
+        return self._has_question_cue_with_focus_overlap(focus_text, answer_text)
+
+    def _starts_with_additive_continuation(self, text: str) -> bool:
+        """Return whether text opens as an additive continuation."""
+
+        return bool(_ADDITIVE_CONTINUATION_START_RE.match(normalize_rule_text(text)))
+
+    def _is_additive_continuation_answer(
+        self, question: QuestionCandidate, answer: _AnswerCandidate
+    ) -> bool:
+        """Return whether an adjacent same-speaker answer starts as continuation."""
+
+        if answer.distance_units != 1:
+            return False
+        if answer.gap_seconds is not None and answer.gap_seconds > 6.0:
+            return False
+        if not self._starts_with_additive_continuation(answer.answer_text):
+            return False
+        question_profile = self._speaker_profile(question.unit)
+        answer_profile = self._speaker_profile_from_units(answer.answer_units)
+        if (
+            question_profile["reliability"] == "reliable"
+            and answer_profile["reliability"] == "reliable"
+        ):
+            return question_profile["speaker_id"] == answer_profile["speaker_id"]
+        return (
+            question_profile["reliability"] == "missing"
+            or answer_profile["reliability"] == "missing"
+        )
 
     def _is_question_continuation_answer(self, normalized_text: str) -> bool:
         """Return whether an answer is likely still clarifying the question."""
@@ -6049,6 +8605,8 @@ class QAPairExtractor:
         normalized_text = self._strip_leading_question_discourse_markers(
             normalized_text,
         )
+        if _DIRECT_DEFINITION_REQUEST_RE.match(normalized_text):
+            return True
         if self._starts_with_interrogative_word(normalized_text):
             return True
         if self._is_terminal_object_question(normalized_text):
@@ -6146,7 +8704,9 @@ class QAPairExtractor:
         """Return whether a question is only a discourse tag."""
 
         stripped = normalized_text.rstrip(" ?.!").strip()
-        return stripped in _DISCOURSE_TAG_QUESTIONS
+        return stripped in _DISCOURSE_TAG_QUESTIONS or bool(
+            _TAG_QUESTION_RE.fullmatch(stripped),
+        )
 
     @staticmethod
     def _is_rhetorical_poll_question(normalized_text: str) -> bool:
@@ -6272,6 +8832,27 @@ class QAPairExtractor:
         )
 
     @staticmethod
+    def _is_poll_or_backchannel_answer(normalized_text: str) -> bool:
+        """Return whether an answer is only classroom poll/backchannel noise."""
+
+        stripped = normalized_text.rstrip(" ?.!;:").strip()
+        if not stripped:
+            return False
+        tokens = re.findall(r"\b[\w']+\b", stripped)
+        if not tokens or len(tokens) > 10:
+            return False
+        noise_tokens = _BACKCHANNEL_ANSWER_TOKENS | _POLL_OPTION_WORDS
+        if not all(token in noise_tokens for token in tokens):
+            return False
+        option_count = sum(1 for token in tokens if token in _POLL_OPTION_WORDS)
+        backchannel_count = len(tokens) - option_count
+        if option_count >= 2:
+            return True
+        if backchannel_count >= 2:
+            return True
+        return len(set(tokens)) == 1 and len(tokens) >= 2
+
+    @staticmethod
     def _trim_answer_meta_opening(text: str) -> tuple[str, str | None]:
         """Remove short meta openings when substantive answer text follows."""
 
@@ -6293,6 +8874,122 @@ class QAPairExtractor:
         if tag_reason:
             reasons.append(tag_reason)
         return cleaned_text, reasons
+
+    def _trim_internal_checkin_from_answer(
+        self,
+        *,
+        question_text: str,
+        answer_text: str,
+    ) -> tuple[str, dict[str, Any]]:
+        """Remove short check-in insertions between valid answer periods."""
+
+        cleaned_text = re.sub(r"\s+", " ", answer_text or "").strip()
+        clause_trimmed = self._trim_internal_checkin_clauses(cleaned_text)
+        if clause_trimmed != cleaned_text and self._answer_text_stands_after_internal_trim(
+            question_text=question_text,
+            answer_text=clause_trimmed,
+        ):
+            return clause_trimmed, {
+                "trimmed": True,
+                "reason": "answer_internal_checkin_trimmed",
+                "original_answer_text": answer_text,
+                "trim_type": "clause",
+            }
+
+        spans = self._sentence_spans(cleaned_text)
+        if len(spans) < 3:
+            return answer_text, {"trimmed": False, "reason": "too_few_sentences"}
+
+        kept_sentences: list[str] = []
+        removed_sentences: list[str] = []
+        for index, (sentence, _, _) in enumerate(spans):
+            normalized_sentence = normalize_rule_text(sentence)
+            internal = 0 < index < len(spans) - 1
+            if internal and self._is_internal_checkin_sentence(normalized_sentence):
+                removed_sentences.append(sentence.strip())
+                continue
+            kept_sentences.append(sentence.strip())
+
+        if not removed_sentences or len(kept_sentences) == len(spans):
+            return answer_text, {"trimmed": False, "reason": "no_internal_checkin"}
+
+        candidate_text = self._join_text(kept_sentences)
+        if not self._answer_text_stands_after_internal_trim(
+            question_text=question_text,
+            answer_text=candidate_text,
+        ):
+            return answer_text, {
+                "trimmed": False,
+                "reason": "remaining_answer_too_weak",
+                "removed_sentences": removed_sentences,
+            }
+        return candidate_text, {
+            "trimmed": True,
+            "reason": "answer_internal_checkin_trimmed",
+            "original_answer_text": answer_text,
+            "removed_sentences": removed_sentences,
+            "trim_type": "sentence",
+        }
+
+    @staticmethod
+    def _trim_internal_checkin_clauses(text: str) -> str:
+        """Remove compact check-in clauses embedded inside answer sentences."""
+
+        cleaned = re.sub(
+            r"(?i)(?:[,;:]\s*)?(?:ci\s+siamo\s*,?\s*)?"
+            r"mi\s+state\s+(?:vedendo|sentendo|seguendo)"
+            r"(?:\s*,?\s*(?:ci\s+siamo))?(?=[,.!?;:]|\s|$)",
+            "",
+            text,
+        )
+        cleaned = re.sub(
+            r"(?i)(?:[,;:]\s*)?(?:are\s+(?:we|you)\s+(?:ready|good|clear|following)|"
+            r"can\s+you\s+(?:see|hear|follow))(?=[,.!?;:]|\s|$)",
+            "",
+            cleaned,
+        )
+        cleaned = re.sub(r"\s+([,.!?;:])", r"\1", cleaned)
+        cleaned = re.sub(r"\s{2,}", " ", cleaned)
+        cleaned = re.sub(r"\s+([,.!?])", r"\1", cleaned)
+        cleaned = re.sub(r"([,;:])\s*([.!?])", r"\2", cleaned)
+        return cleaned.strip()
+
+    def _answer_text_stands_after_internal_trim(
+        self,
+        *,
+        question_text: str,
+        answer_text: str,
+    ) -> bool:
+        """Return whether a trimmed answer still has enough local substance."""
+
+        normalized_answer = normalize_rule_text(answer_text)
+        if count_tokens(normalized_answer) < 7:
+            return False
+        if self._has_poll_or_backchannel_noise(normalized_answer):
+            return False
+        answer_matches = collect_rule_matches(normalized_answer, ANSWER_CUE_RULES)
+        alignment = self._question_answer_alignment(
+            question_text=question_text,
+            answer_text=answer_text,
+            question_type="unknown",
+            answer_source="internal_checkin_trim",
+        )
+        return bool(
+            answer_matches
+            or alignment.get("shared_keywords")
+            or len(self._content_tokens(answer_text)) >= 5
+        )
+
+    @staticmethod
+    def _is_internal_checkin_sentence(normalized_text: str) -> bool:
+        """Return whether a short internal sentence is classroom check-in chatter."""
+
+        stripped = normalized_text.rstrip(" ?.!;:").strip()
+        if not stripped:
+            return False
+        if count_tokens(stripped) > 12:
+            return False
+        return bool(_BACKCHANNEL_CHECK_RE.search(stripped))
 
     @staticmethod
     def _trim_answer_trailing_tag(text: str) -> tuple[str, str | None]:

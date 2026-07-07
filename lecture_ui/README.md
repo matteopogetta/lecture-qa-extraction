@@ -36,6 +36,31 @@ Options: `--port 9000`, `--host 0.0.0.0`, `--no-browser`.
 
 Keyboard: `Space` play/pause, `←/→` seek 5s.
 
+## "Struttura" — structured data view
+
+The **Struttura** button (top bar, enabled once a session is loaded) opens a
+full-screen, graphical view of the session JSON — an alternative to reading the
+long raw text:
+
+- overview stat cards (duration, sentences, utterances, segments, Q/A, speakers,
+  languages, pipeline time) plus configuration chips;
+- pipeline timing per stage showing **real time (cold or warm)** with a status
+  badge (executed / cache / artifact / skipped) plus the **expected cold time**
+  as a grey ghost bar behind it. The cold estimate is derived from previous
+  evaluation runs of the same lesson (the oldest fully-cold run when available,
+  otherwise the longest real-executed time per stage across history); stages
+  never run cold in history show `cold n/d`. A run-level badge marks whether the
+  loaded run itself was warm (cache reuse) or cold;
+- speaker talk-time, detected languages and sentence review-priority as bars;
+- Q/A distribution by confidence and by question type, plus a Q/A table with
+  inline confidence bars — click a row to open it in the player;
+- scrollable Segments and Sentences tables (sentences are filterable by text or
+  speaker) — click a row to jump to that point in the audio;
+- a **JSON grezzo** toggle to still see the formatted raw JSON when needed.
+
+Everything is computed client-side from the already-loaded session, so it works
+for any run in the picker.
+
 ## Notes on audio resolution
 
 Audio is located from the session's `audio_sources[].audio_path`. If that

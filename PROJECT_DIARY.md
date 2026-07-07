@@ -3373,3 +3373,1055 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src .venv/bin/python -m unittest tests.test
 Risultato:
 
 - `98` test OK.
+
+## 2026-07-03 - QA coverage proxy per review esterna
+
+Contesto:
+
+- Le review esterne misurano bene la precisione dei candidati emessi, ma non
+  danno un segnale rapido sul recall.
+- Serveva un proxy a costo quasi zero, calcolato sui dati gia' in memoria a
+  fine QA-stage e leggibile senza scorrere tutto il transcript.
+
+Modifica:
+
+- Aggiunto `session.metadata["qa_coverage"]` durante l'estrazione QA:
+  - `interrogative_sentence_count`;
+  - `emitted_candidate_count`;
+  - `coverage_ratio`;
+  - `suppressed_by_gate_count`;
+  - `suppressed_by_gate_reasons`.
+- Il conteggio interrogativo riusa le regole esistenti di `_qa_rules_impl`
+  (`QUESTION_CUE_RULES`, `DIDACTIC_QUESTION_RULES`, `DECLARATIVE_WHAT_PATTERNS`)
+  e non introduce un nuovo stadio pipeline.
+- I candidati scartati dai gate sono conteggiati solo come aggregati, senza
+  dump candidato-per-candidato.
+- `metrics.json` ora contiene la sezione aggregata `qa_coverage`.
+- `review_packet.md` ora contiene `Coverage Summary` subito dopo
+  `Timing Summary`.
+
+Test:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src .venv/bin/python -m unittest tests.test_qa_extractor tests.test_evaluation_run_exporter tests.test_ai_review_packet_exporter
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python -m unittest discover -s tests
+```
+
+Risultato:
+
+- `106` test mirati OK.
+- `216` test discovery unittest OK.
+- Verificata una run sintetica di export sotto
+  `evaluations/qa_coverage_synthetic/runs/qa_coverage_synthetic`:
+  - `metrics.json` contiene `qa_coverage`;
+  - `review_packet.md` contiene `Coverage Summary`.
+
+## 2026-07-03 - Structural recall recovery QA interview (R1)
+
+Contesto:
+
+- Obiettivo: aumentare recall `quality_local` su contenuti intervista senza ridurre i gate di precisione.
+- Pattern coperti: domanda senza `?`, domanda spezzata su piu' frasi, run-on con risposta locale.
+
+Modifica (implementata da Codex, entry registrata da Claude):
+
+- Recupero missing-terminal con reason `question_without_terminal_mark_recovered`.
+- Ricomposizione split question max 3 frasi con reason `split_question_recomposed`.
+- Run-on accettato solo con risposta immediatamente successiva responsive, reason `runon_question_local_answer`.
+- Nessuna modifica a segmenter, sentence reconstruction, exporter o profili diversi.
+
+Test:
+
+- `PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src .venv/bin/python -m unittest tests.test_qa_extractor tests.test_evaluation_run_exporter tests.test_ai_review_packet_exporter`
+- Risultato: `106` test OK.
+
+Run warm:
+
+- Dialoghi `2026-07-03_102855_quality_local_structural`: `5` candidati.
+- L25P08 `2026-07-03_102907_quality_local_structural`: `7` candidati, recuperi socratici presenti.
+
+## 2026-07-03 - Review esterna R1 e decisione R1.1 (Claude)
+
+Review esterna delle due run R1:
+
+- L25P08 `2026-07-03_102907`: quality `4`, keep `6/7` + 1 revise. Nessuna regressione: profilo monologico/socratico maturo.
+- Dialoghi `2026-07-03_102855`: quality `2`, keep `2/5`, reject `3/5`. Recall salito (2 -> 5) ma i 3 reject derivano TUTTI dai nuovi pattern:
+  - `qa_0013`, `qa_0047`: dichiarative/retoriche di monologo promosse a domanda dal recupero missing-terminal;
+  - `qa_0040`: domanda target `quali lavori` trovata (obiettivo centrato) ma risposta = continuazione interrogativa della domanda stessa.
+
+Coverage proxy (R2) attivo e utile: Dialoghi 5/153 (0.033), L25P08 7/43 (0.163), breakdown scarti per reason code disponibile nel packet.
+
+Decisione:
+
+- NO-GO per il batch di generalizzazione R3 finche' la precisione dei pattern A/B non viene ristretta.
+- Aperto micro-ciclo R1.1 (tightening, no nuove feature):
+  1. pattern A solo con cue interrogativo in posizione head del focus + segnale di non-continuazione;
+  2. reject di risposte contenenti cue interrogativo o eco del focus domanda anche senza `?`, con ricerca della frase successiva;
+  3. penalita' per risposte same-speaker che iniziano con marker additivi di continuazione.
+- R3 parte solo se R1.1 porta Dialoghi a keep >= 3/4 senza perdere qa_0005/qa_0017 e senza regressione L25P08.
+
+
+## 2026-07-03 - R1.1 tightening structural QA interview
+
+Contesto:
+
+- R1 ha aumentato il recall su Dialoghi ma ha introdotto falsi positivi missing-terminal e una risposta che era continuazione interrogativa della domanda.
+- Obiettivo: solo tightening strutturale su `quality_local`, senza nuove feature e senza modifiche a segmenter/exporter/profili.
+
+Modifica:
+
+- Missing-terminal ristretto a cue interrogativo in head del focus, con veto per focus recuperati da continuazioni/lista con cue non-head nella frase precedente.
+- Aggiunto skip di risposte locali che contengono cue interrogativo strutturale piu' overlap col focus domanda, con reason `answer_question_continuation_rejected` e ricerca della frase successiva.
+- Aggiunta penalita' non bloccante per risposte same-speaker adiacenti con marker additivo iniziale, reason `additive_continuation_answer_penalty`.
+- Nessuna modifica a sentence reconstruction, segmenter, exporter o profili diversi da `quality_local`.
+
+Test:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src .venv/bin/python -m unittest tests.test_qa_extractor tests.test_evaluation_run_exporter tests.test_ai_review_packet_exporter
+```
+
+Risultato:
+
+- `109` test OK.
+- Nota ambiente: `PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src .venv/bin/python -m unittest discover -s tests` resta bloccato da `tests/test_placeholder_cli.py` per import `pytest` (`_pytest.__version__` non importabile nell'ambiente), non toccato in questo ciclo.
+
+Run warm:
+
+- Dialoghi `2026-07-03_115414_quality_local_structural`: `3` candidati. Keep attesi presenti: apertura intervista e cosmologia numerica. Assenti le due dichiarative/retoriche note; `quali lavori` non emesso, quindi nessuna risposta-continuazione associata.
+- L25P08 `2026-07-03_115425_quality_local_structural`: `7` candidati, recuperi socratici preservati.
+
+## 2026-07-03 - Review esterna R1.1 e GO per R3 (Claude)
+
+Review esterna delle run R1.1:
+
+- Dialoghi `2026-07-03_115414`: quality `3`, keep `2/3` + 1 revise, zero falsi positivi.
+  - I 3 falsi positivi di R1 non sono piu' emessi; `answer_question_continuation_rejected` attivo nei reason codes.
+  - qa_0005 e qa_0015 (ex qa_0017) preservati.
+  - Residuo: qa_0026, auto-domanda narrativa run-on con risposta garbled -> revise; nota per futuro ciclo boundary trimming.
+- L25P08 `2026-07-03_115425`: candidati testualmente identici alla run gia' valutata, quality `4` confermata, nessuna regressione.
+
+Decisione: GO per R3 (batch di generalizzazione su 7 input + igiene label duplicati).
+
+Motivazione:
+
+- precisione stabile sui due input sentinella; continuare a raffinare solo su Dialoghi rischierebbe overfitting;
+- serve la misura di coverage (R2) sugli altri 5 input per decidere dove investire il prossimo ciclo recall;
+- il recall basso su interviste (coverage 0.02) resta la linea aperta nota, da riprendere dopo la fotografia del benchmark.
+
+## 2026-07-03 - R3 benchmark congelato: batch verifica warm
+
+Contesto:
+
+- R1, R1.1 e R2 sono in main e validati da review esterna.
+- Obiettivo del ciclo: produrre una fotografia benchmark congelata su 7 input
+  con `quality_local` + `structural`, senza valutare le run e senza modifiche a
+  logica di estrazione.
+
+Igiene input:
+
+- Unificate le cartelle duplicate sotto i label canonici:
+  - Stanford:
+    `stanford_seminar_-_human-centered_explainable_ai_from_algorithms_to_user_experiences`;
+  - Dialoghi:
+    `dialoghi_di_scienza_ep2_-_astrofisica`.
+- Spostate le run storiche duplicate sotto i label canonici, senza cancellare
+  run:
+  - Stanford `2026-06-26_151105_quality_local_structural`;
+  - Dialoghi `2026-07-01_194132_quality_local_structural`.
+- Corretta la normalizzazione alla fonte in:
+  - `scripts/run_evaluation_batch.py`;
+  - `src/lecture_analyzer/output/_evaluation_run_exporter_impl.py`.
+- Alias coperti: Stanford `human_centered` -> `human-centered`, Dialoghi con
+  doppio prefisso e stem normalizzato `001_*_mono_16000hz`.
+
+Run prodotte:
+
+- Deep Time:
+  `evaluations/deep_time_and_intelligence_panel_q_a_at_mit_2021_unfolding_intelligence_symposium/runs/2026-07-03_121411_quality_local_structural`
+  - total observed/warm `0.659s`; cold-equivalent `1345.0s`; QA `4`; coverage `0.031`.
+  - stage observed-warm/cold-eq: audio_normalization `0.105s/4.984s`; transcription `0.003s/1325.9s`; alignment `0.030s/2.741s`; utterance_building `0.020s/0.065s`; sentence_reconstruction `0.021s/10.865s`; transcript_segmentation `0.004s/0.004s`; qa_extraction `0.113s/0.113s`; json_export `0.357s/0.357s`.
+- Eugenia Cheng:
+  `evaluations/eugenia_cheng_is_math_real_talks_at_google/runs/2026-07-03_121413_quality_local_structural`
+  - total observed/warm `0.875s`; cold-equivalent `>=1571.0s` (`audio_normalization` cold reference missing); QA `14`; coverage `0.0571`.
+  - stage observed-warm/cold-eq: audio_normalization `0.021s/missing`; transcription `0.006s/1396.0s`; alignment `0.035s/161.8s`; utterance_building `0.024s/0.211s`; sentence_reconstruction `0.033s/12.220s`; transcript_segmentation `0.008s/0.008s`; qa_extraction `0.232s/0.232s`; json_export `0.504s/0.504s`.
+- L25P08:
+  `evaluations/l25p08/runs/2026-07-03_121414_quality_local_structural`
+  - total observed/warm `0.143s`; cold-equivalent `211.3s`; QA `7`; coverage `0.1628`.
+  - stage observed-warm/cold-eq: audio_normalization `0.021s/0.958s`; transcription `<0.001s/201.5s`; alignment `0.004s/1.361s`; utterance_building `0.003s/0.015s`; sentence_reconstruction `0.006s/7.290s`; transcript_segmentation `0.001s/0.001s`; qa_extraction `0.043s/0.043s`; json_export `0.064s/0.064s`.
+- L25P09:
+  `evaluations/l25p09/runs/2026-07-03_121415_quality_local_structural`
+  - total observed/warm `0.169s`; cold-equivalent `280.0s`; QA `7`; coverage `0.1228`.
+  - stage observed-warm/cold-eq: audio_normalization `0.020s/1.459s`; transcription `0.001s/270.0s`; alignment `0.005s/1.363s`; utterance_building `0.004s/0.018s`; sentence_reconstruction `0.007s/7.021s`; transcript_segmentation `0.002s/0.002s`; qa_extraction `0.043s/0.043s`; json_export `0.085s/0.085s`.
+- SSL1P1:
+  `evaluations/ssl1p1/runs/2026-07-03_121416_quality_local_structural`
+  - total observed/warm `0.344s`; cold-equivalent `645.9s`; QA `2`; coverage `0.0333`.
+  - stage observed-warm/cold-eq: audio_normalization `0.021s/1.947s`; transcription `0.003s/635.0s`; alignment `0.011s/1.607s`; utterance_building `0.018s/0.047s`; sentence_reconstruction `0.014s/7.012s`; transcript_segmentation `0.005s/0.005s`; qa_extraction `0.044s/0.044s`; json_export `0.222s/0.222s`.
+- Stanford:
+  `evaluations/stanford_seminar_-_human-centered_explainable_ai_from_algorithms_to_user_experiences/runs/2026-07-03_121417_quality_local_structural`
+  - total observed/warm `0.664s`; cold-equivalent `1074.2s`; QA `12`; coverage `0.0622`.
+  - stage observed-warm/cold-eq: audio_normalization `0.023s/5.043s`; transcription `0.003s/1055.1s`; alignment `0.032s/1.862s`; utterance_building `0.019s/0.078s`; sentence_reconstruction `0.024s/11.620s`; transcript_segmentation `0.004s/0.004s`; qa_extraction `0.167s/0.167s`; json_export `0.385s/0.385s`.
+- Dialoghi:
+  `evaluations/dialoghi_di_scienza_ep2_-_astrofisica/runs/2026-07-03_121419_quality_local_structural`
+  - total observed/warm `0.626s`; cold-equivalent `1256.0s`; QA `3`; coverage `0.0196`.
+  - stage observed-warm/cold-eq: audio_normalization `0.027s/3.344s`; transcription `0.003s/1127.5s`; alignment `0.028s/117.7s`; utterance_building `0.015s/0.050s`; sentence_reconstruction `0.023s/6.950s`; transcript_segmentation `0.005s/0.005s`; qa_extraction `0.138s/0.138s`; json_export `0.381s/0.381s`.
+
+Verifiche:
+
+- Ogni run contiene `session.json`, `review_packet.md`, `metrics.json`,
+  `ai_review.json`.
+- Ogni `review_packet.md` contiene `Coverage Summary`.
+- Ogni `metrics.json` contiene `qa_coverage`.
+- Ogni `ai_review.json` resta `pending_manual_review`.
+- Nessuna cartella label duplicata residua in `evaluations/`.
+- Test mirato:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src .venv/bin/python -m unittest tests.test_evaluation_run_exporter
+```
+
+Risultato:
+
+- `5` test OK.
+- Batch eseguito in modalita' warm/cached: trascrizione, alignment,
+  utterance_building e sentence_reconstruction riusati dove disponibili;
+  `qa_extraction` eseguita in tutte le 7 run.
+- Nessuna valutazione qualitativa eseguita in questo ciclo: review demandata a
+  Claude ("Valuta").
+
+## 2026-07-03 - Review esterna batch R3: fotografia del benchmark (Claude)
+
+Valutate tutte le 7 run del batch R3 (`2026-07-03_1214xx`, quality_local structural, warm).
+Dettaglio in `evaluations/benchmark_overview_2026-07-03.md` (+ json).
+
+Sintesi:
+
+- 49 candidati: keep 26 (53%), revise 12, reject 11. Avg quality 2.86.
+- Soglie target (keep >= 70%, Q >= 4) NON raggiunte: stop-condition del decision plan scattata.
+- l25p08 e' l'unico input a soglia (Q4, keep 86%): il profilo socratico/monologico didattico e' maturo.
+- Failure mode dominante e trasversale: risposta = continuazione same-speaker (deep_time 4/4, ssl1p1 2/2, stanford, eugenia). Non risolvibile in modo affidabile senza segnale speaker.
+- Secondari: span troncati (domande eugenia, risposte l25p09), risposte adiacenti non responsive (stanford), rumore poll/tag (l25p09).
+- Coverage proxy operativo su tutti gli input: recall basso ovunque (0.02-0.16).
+
+Decisione (prompt in docs/decision_plan_2026-07-03.md):
+
+- R4: micro-ciclo rule-based span completeness + tag/poll noise (costo runtime ~0).
+- R5: esperimento misurato diarizzazione su deep_time + dialoghi con gate speaker-change opzionale.
+- R6: esperimento misurato responsiveness semantico locale sui soli candidati.
+- R5 e R6 si confrontano su qualita'-per-secondo prima di qualsiasi adozione di default.
+
+## 2026-07-03 - Ricalcolo sentence_reconstruction wtpsplit per QA review
+
+Ricalcolato il solo livello `sentence_reconstruction` per i 6 input benchmark non-dialoghi del batch `2026-07-03_1214xx`, dopo aver messo in backup i manifest frasi pre-fix wtpsplit-strict (`artifacts/sentences_backup_2026-07-03_wtpsplit_recompute/`). Nessuna modifica al codice. Le run sono state lanciate in profilo `quality_local`, segmentazione `structural`, senza `--from-scratch`: trascrizione, alignment e utterance cache sono state riusate; `segmentation` e `qa_extraction` sono state rigenerate a valle delle nuove frasi.
+
+Run prodotte e verifica `sentence_reconstruction`:
+
+- Deep Time: `evaluations/deep_time_and_intelligence_panel_q_a_at_mit_2021_unfolding_intelligence_symposium/runs/2026-07-03_141320_quality_local_structural`
+  - `sentence_reconstruction`: `executed`, `11.578975s`, backend richiesto `wtpsplit`, artifact `wtpsplit_sat`, `fallback_source_count=0`.
+  - QA candidati: `3` vs `4` nella run `2026-07-03_121411_quality_local_structural` (`-1`).
+- Eugenia Cheng: `evaluations/eugenia_cheng_is_math_real_talks_at_google/runs/2026-07-03_141345_quality_local_structural`
+  - `sentence_reconstruction`: `executed`, `11.971752s`, backend richiesto `wtpsplit`, artifact `wtpsplit_sat`, `fallback_source_count=0`.
+  - QA candidati: `14` vs `14` nella run `2026-07-03_121413_quality_local_structural` (`0`).
+- L25P08: `evaluations/l25p08/runs/2026-07-03_141408_quality_local_structural`
+  - `sentence_reconstruction`: `executed`, `13.109012s`, backend richiesto `wtpsplit`, artifact `wtpsplit_sat`, `fallback_source_count=0`.
+  - QA candidati: `7` vs `7` nella run `2026-07-03_121414_quality_local_structural` (`0`).
+- L25P09: `evaluations/l25p09/runs/2026-07-03_141439_quality_local_structural`
+  - `sentence_reconstruction`: `executed`, `15.797789s`, backend richiesto `wtpsplit`, artifact `wtpsplit_sat`, `fallback_source_count=0`.
+  - QA candidati: `7` vs `7` nella run `2026-07-03_121415_quality_local_structural` (`0`).
+- SSL1P1: `evaluations/ssl1p1/runs/2026-07-03_141458_quality_local_structural`
+  - `sentence_reconstruction`: `executed`, `7.555130s`, backend richiesto `wtpsplit`, artifact `wtpsplit_sat`, `fallback_source_count=0`.
+  - QA candidati: `2` vs `2` nella run `2026-07-03_121416_quality_local_structural` (`0`).
+- Stanford: `evaluations/stanford_seminar_-_human-centered_explainable_ai_from_algorithms_to_user_experiences/runs/2026-07-03_141521_quality_local_structural`
+  - `sentence_reconstruction`: `executed`, `12.501815s`, backend richiesto `wtpsplit`, artifact `wtpsplit_sat`, `fallback_source_count=0`.
+  - QA candidati: `12` vs `12` nella run `2026-07-03_121417_quality_local_structural` (`0`).
+
+Verifiche:
+
+- Ogni nuova run contiene i 4 file standard: `session.json`, `review_packet.md`, `metrics.json`, `ai_review.json`.
+- Ogni `ai_review.json` e' `pending_manual_review`.
+- In ogni nuova run `transcription` e `alignment` risultano `reused_from_cache`.
+- I nuovi manifest in `artifacts/sentences/*/*.sentences.json` per i 6 input riportano `splitter_backend=wtpsplit_sat` e `recomputed=True`.
+- Valutazione qualitativa demandata a Claude.
+
+## 2026-07-03 - Review esterna post ricompute wtpsplit (Claude)
+
+Verifica del ricompute R3.1: fallback_source_count=0 su tutti i 6 input, costo ~12s/input.
+
+- eugenia_cheng, l25p08, stanford: candidati testualmente invariati -> review riusate.
+- deep_time `141320` (Q2, 0 keep/3 reject), ssl1p1 `141458` (Q1, 0/2), l25p09 `141439` (Q2, 2 keep/2 revise/3 reject): rivalutati.
+
+Esito: frasi ora sintatticamente integre (confermato dai reviewer), ma la qualita' QA NON migliora.
+Baseline benchmark aggiornata: keep 52%, avgQ 2.57 (dettaglio in evaluations/benchmark_overview_2026-07-03.md).
+
+Conclusioni decisionali:
+
+1. Il confound della cache stale e' rimosso: da qui in poi ogni delta di qualita' e' attribuibile all'estrazione.
+2. Failure dominante rafforzato: risposta-continuazione same-speaker (deep_time 3/3 reject, ssl1p1 2/2). R5/R6 confermati come prossimi esperimenti misurati.
+3. I difetti l25p09 (risposte troncate a fine finestra, poll/backchannel 'Via. Bon', tag-question isolate) persistono con wtpsplit reale: R4 confermato, baseline di riferimento per accettazione = run 1413xx-1415xx.
+
+## 2026-07-03 - R4 structural QA span/noise guardrails
+
+Contesto:
+
+- Review esterna del benchmark `quality_local structural` ha isolato tre difetti rule-based:
+  domande ritagliate dentro un periodo, risposte tagliate a fine finestra e rumore
+  d'aula da tag/poll/backchannel.
+- Obiettivo: correzione solo strutturale, bilingue it/en, senza nuove dipendenze e
+  senza refactoring.
+
+Modifica:
+
+- Aggiunto segnale `question_span_integrity_penalty` quando un focus domanda e'
+  estratto da dentro una frase senza confine sintattico forte.
+- La search locale puo' costruire uno span risposta `+1` frase quando lo span
+  corrente termina senza punteggiatura terminale e la frase successiva e'
+  continuazione strutturale; reason `answer_span_completion_support`.
+- Aggiunto `answer_truncated_at_boundary_penalty` per span non terminali a fine
+  finestra/limite senza continuazione disponibile.
+- Esteso il reject di tag/check-in isolati (`right?`, `vero?`, `no?`) e aggiunto
+  gate stretto per risposte fatte solo di poll/backchannel ripetuti o non
+  lessicali.
+- Tie-break del ranking: a parita' di score preferisce lo span con completion
+  strutturale.
+
+Test:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src .venv/bin/python -m unittest tests.test_qa_extractor tests.test_evaluation_run_exporter tests.test_ai_review_packet_exporter
+```
+
+Risultato:
+
+- `117` test OK.
+
+Run warm finali (`quality_local`, `structural`, cache riusata; output sotto
+`evaluations/r4_structural_2026-07-03`):
+
+- L25P09 `2026-07-03_215521_quality_local_structural`: `6` candidati.
+  - Rimosso il candidato poll/backchannel `Via. Bon...`.
+  - `qa_0003` conserva `answer_span_completion_support`.
+  - `qa_0013` ora usa due sentence di risposta e chiude con frase terminale.
+  - Coverage suppressed: `poll_or_backchannel_noise=1`, `question_span_integrity=3`.
+- Eugenia Cheng `2026-07-03_215523_quality_local_structural`: `14` candidati.
+  - Conteggio invariato rispetto alla baseline `141345`.
+  - `question_span_integrity_penalty` visibile su `8` candidati emessi e
+    `question_span_integrity=4` negli scarti.
+- L25P08 `2026-07-03_215522_quality_local_structural`: `7` candidati.
+  - Conteggio invariato rispetto alla baseline `141408`.
+
+Note:
+
+- La prima esecuzione del batch era fallita perche' lo script voleva scrivere
+  nell'output default sotto `ExerPlazaSample`; le run finali sono state rilanciate
+  con `--output-root` e `--evaluation-root` interni al progetto.
+- Review qualitativa finale demandata a Claude.
+
+## 2026-07-04 - Review esterna R4 e decisione (Claude)
+
+Nota di processo: le run R4 erano state scritte sotto `evaluations/r4_structural_2026-07-03/`
+invece del layout standard; spostate nelle cartelle canoniche `<input>/runs/`. Nei prossimi
+prompt run sempre nel layout standard.
+
+Review esterna (baseline di confronto: run 1413xx-1415xx):
+
+- l25p09 `215521` (unica con Q/A davvero cambiate): quality `2`, 1 keep / 3 revise / 2 reject.
+  - Risolti: candidato poll 'Via. Bon' non emesso; tag-question isolata ora fusa con la premessa.
+  - Parziali: qa_0003 esteso ma con coda ancora troncata.
+  - Nuovi rilievi: coppia eco quasi-duplicata qa_0008/qa_0009; check-in di classe embedded nello span risposta (qa_0013).
+- eugenia `215523` e l25p08 `215522`: testi Q/A invariati -> review riusate; su eugenia R4 aggiunge
+  question_span_integrity_penalty diagnostica (8 emessi, 4 scarti) senza cambiare l'output.
+- Run intermedie `2151xx`: candidati identici alle finali (l25p08, eugenia) -> review copiate;
+  l25p09 `215134` differisce dalla finale ed e' senza valore aggiunto -> lasciata pending, proposta cancellazione.
+
+Bilancio R4: guadagno reale ma piccolo (pulizia noise su l25p09); i difetti eugenia sono solo
+penalizzati, non corretti. Conferma che il margine rule-based sugli span si sta esaurendo.
+
+Decisione:
+
+- GO per R5 (diarizzazione misurata) e R6 (responsiveness semantico locale): sono ora il lever
+  principale; prompt gia' in docs/decision_plan_2026-07-03.md.
+- Micro-fix opzionale R4.1 (dedupe coppie eco + trimming check-in interni allo span) da accorpare
+  al primo ciclo utile, non come ciclo dedicato.
+
+## 2026-07-04 - Ristrutturazione R5 in due varianti (Claude)
+
+Su proposta di Matteo (diarizzare solo dove serve): R5 diviso in
+- R5a: speaker-change check via embedding sui soli span Q/A dei candidati (similarita' coseno
+  voce domanda vs voce risposta, modello locale, costo ~secondi/run, fallback su span corti).
+  Copre il gate di precisione senza pagare la diarizzazione completa.
+- R5b: diarizzazione completa misurata su deep_time+dialoghi (una-tantum, cacheable), da eseguire
+  solo se R5a non basta o quando si apre la linea recall a turni su interviste/panel.
+Ordine: R5a subito (in parallelo a R6), R5b condizionato. Prompt aggiornati nel decision plan.
+
+## 2026-07-04 - R5a speaker-change check opzionale post-estrazione
+
+Implementato l'esperimento R5a come controllo opzionale, default OFF, sui soli
+span Q/A dei candidati gia' estratti.
+
+Modifica:
+
+- Nuovo modulo `analysis/qa_speaker_check.py` con config dedicata,
+  estrazione locale degli span WAV normalizzati e backend SpeechBrain ECAPA da
+  path locale.
+- Nessun download a runtime: se `--qa-speaker-model-path` non e' configurato o
+  non e' disponibile, il check resta trasparente e ogni candidato riceve
+  `speaker_check_unavailable` senza penalita'.
+- Span troppo corti o timing/audio non disponibili non applicano gate: solo
+  flag diagnostico `speaker_check_unavailable`.
+- Quando il modello locale e' disponibile, il check scrive
+  `speaker_similarity_score` e flag `same_speaker_suspected` /
+  `different_speaker_likely`; `same_speaker_suspected` applica penalita'
+  configurabile solo se non viene riconosciuto un pattern socratico/self-answer
+  locale.
+- Aggiunti flag CLI `--enable-qa-speaker-check`, `--qa-speaker-model-path` e
+  soglie/penalita' configurabili. Il default resta OFF.
+- `metrics.json` riporta load time modello, tempo totale, tempi per candidato,
+  conteggi flag e note. `review_packet.md` mostra il breakdown speaker per
+  candidato.
+
+Test:
+
+```bash
+.venv/bin/python -m unittest tests.test_qa_speaker_check -v
+```
+
+Risultato: `6` test OK. Nota: `pytest` nella virtualenv locale non si avvia per
+un problema di import `_pytest.__version__`; la suite richiesta e' stata
+eseguita con `unittest` puro.
+
+Run warm con check ON, layout standard:
+
+- `evaluations/deep_time/runs/speaker_check_warm_20260704`
+- `evaluations/dialoghi/runs/speaker_check_warm_20260704`
+- `evaluations/stanford/runs/speaker_check_warm_20260704`
+- `evaluations/l25p08/runs/speaker_check_warm_20260704`
+
+Esito run:
+
+- Tutte le run hanno `ai_review.json` in `pending_manual_review`.
+- Modello speaker non configurato in questa macchina: fallback attivo con nota
+  `model_not_configured_or_missing`.
+- Nessuna penalita' applicata (`max_penalty=0.0` su tutti e quattro gli input);
+  quindi anche i socratici/self-answered restano non penalizzati in questo ciclo.
+- Tempi speaker-check osservati: deep_time `0.0007s`, dialoghi `0.0008s`,
+  stanford `0.0007s`, l25p08 `0.0015s`.
+
+Decisione:
+
+- Nessuna adozione default in questo ciclo. Valutazione qualitativa demandata a
+  Claude; il prossimo confronto utile richiede un modello locale pre-scaricato.
+
+## 2026-07-04 - Review R5a (esperimento nullo), stato R6, regressione R4 scoperta (Claude)
+
+R5a:
+
+- Codice e fallback corretti (6 test OK), ma il modello speaker non era configurato: tutte le run
+  hanno speaker_check_unavailable su ogni candidato. Nessuna misura reale del check: esperimento da
+  rilanciare con modello ECAPA locale in --qa-speaker-model-path (speechbrain non ancora nella venv).
+- Le 4 run erano di nuovo fuori layout (cartelle nuove deep_time/, dialoghi/, stanford/ + label
+  non standard): spostate da Claude nelle cartelle canoniche; le dir vuote residue non sono
+  cancellabili dalla sessione Claude, rimuoverle a mano.
+- Review scritte riusando le valutazioni baseline (candidati identici) con nota esperimento nullo.
+
+REGRESSIONE R4 (scoperta via la run dialoghi post-R4):
+
+- Il keep validato qa_0005 ('Perche' hai fatto astrofisica?') non viene piu' emesso su dialoghi:
+  soppresso dai gate R4 (question_span_integrity=3 negli scarti). Dialoghi: 2 keep + 1 revise -> 1+1.
+- Causa probabile: integrity/boundary check troppo aggressivo su domande con '?' terminale valido.
+- Da correggere nel prossimo ciclo; dialoghi entra nelle run di non-regressione obbligatorie.
+
+R6:
+
+- Implementazione completa a livello codice (135 test OK), modello sentence-transformers locale
+  scaricato (462 MiB, load 6.06s), ma le 3 run warm non prodotte: la sandbox Codex non poteva
+  scrivere in artifacts/ e l'escalation e' stata rifiutata per crediti esauriti.
+- Le run R6 (e il rilancio R5a) si possono eseguire in locale senza crediti Codex, via CLI.
+
+## 2026-07-04 - Passthrough speaker-check nel batch runner (Claude)
+
+Aggiunto a scripts/run_evaluation_batch.py il passthrough dei flag speaker-check verso main.py
+(--enable-qa-speaker-check, --qa-speaker-model-path, --qa-speaker-min-span-seconds,
+--qa-speaker-same-threshold, --qa-speaker-different-threshold, --qa-speaker-same-penalty),
+speculare a quello gia' esistente per i flag semantic responsiveness. Nuovi parametri di
+_build_run_record con default neutri. Verifica: py_compile OK + dry-run con flag inoltrati
+correttamente nel comando generato. Nessun'altra modifica.
+
+Setup completato da Matteo: speechbrain installato nella venv, modello ECAPA scaricato in
+local_models/spkrec-ecapa-voxceleb. Causa del primo fallimento batch R6 individuata: pattern
+placeholder non sostituito (i media sono in ExerPlazaSample/input, il default e' corretto).
+
+## 2026-07-04 - Fix backend speaker check: encode_file assente (Claude)
+
+Le prime run R5a reali (2026-07-04_1045xx) avevano model_available=true ma checked_candidate_count=0:
+ogni candidato falliva con "check_failed: 'EncoderClassifier' object has no attribute 'encode_file'".
+SpeechBrain >=1.0 non espone encode_file: corretto il backend per usare load_audio + encode_batch
+(con fallback a encode_file se presente, per compatibilita'). I test unit non l'hanno intercettato
+perche' usano un backend fake: nota per il futuro, aggiungere uno smoke test opzionale col modello
+reale quando disponibile. Le 4 run 1045xx restano come misura del solo overhead di load (5-7.6s,
+una tantum per processo) e vanno rilanciate per l'esperimento vero.
+
+## 2026-07-04 - Confronto R5a vs R6 e decisione di adozione (Claude)
+
+Entrambi gli esperimenti eseguiti in locale da Matteo (zero crediti Codex) sui 4/3 input previsti.
+Review nelle run 2026-07-04_105xxx (R5a) e 2026-07-04_1048-1049xx (R6).
+
+R5a - speaker-change check (ECAPA embedding sugli span):
+
+- Costo: load modello 1.6-2.1s per processo + 0.03-0.19s per candidato. Trascurabile.
+- Segnale COERENTE con la ground truth delle review: i flag same_speaker_suspected si concentrano
+  esattamente sulle continuazioni same-speaker gia' giudicate reject (deep_time 2/3 flaggati,
+  stanford 10/12 con i 2 sotto soglia plausibilmente le vere coppie pubblico->speaker,
+  dialoghi qa_0026 flaggato .855).
+- Limiti da correggere in adozione:
+  1. span sovrapposti (socratici intra-frase) danno sim=1.0 tautologica -> escludere dal check;
+  2. span domanda < 1.5s -> unavailable proprio dove la conferma different-speaker servirebbe
+     (dialoghi qa_0015): padding/merge dello span audio entro il turno.
+
+R6 - semantic responsiveness (sentence-transformers sui candidati):
+
+- Costo: 15-30s per run di cui l'88-93% e' SOLO load del modello (13-28s); scoring 0.15s/candidato.
+- Difetto di design: il cap max_candidates=15 viene speso anche su candidati intermedi non emessi
+  (stanford: solo 8/12 emessi hanno score; dialoghi 1/2).
+- Correlazione con la ground truth DEBOLE sul benchmark: su l25p08 il gate (min_score .45) avrebbe
+  penalizzato i keep validati qa_0010 ('Ottengo infinito.') e qa_0016 (Fourier garbled): le risposte
+  brevi o con rumore di trascrizione ma CORRETTE vengono punite dal modello semantico.
+
+DECISIONE:
+
+- R5a VINCE il confronto qualita'-per-secondo: si procede all'adozione (ciclo R7) con gate a
+  penalita', esenzione socratica, esclusione span sovrapposti e gestione span brevi.
+- R6 NON adottato: resta come strumento diagnostico opzionale (default off). Eventuale ripresa solo
+  dopo fix di prioritizzazione emessi e con soglie ricalibrate su risposte brevi; il load per-run
+  lo rende comunque poco adatto al profilo quality_local.
+- Nel ciclo R7 va incluso anche il fix della regressione R4 (dialoghi qa_0005 soppresso).
+
+## 2026-07-04 - R7 adozione R5a in quality_local + fix regressione R4 (Codex)
+
+Implementato il ciclo richiesto:
+
+- `quality_local` abilita di default il QA speaker-check se esiste
+  `local_models/spkrec-ecapa-voxceleb`; altrimenti resta off senza errore.
+- `question_span_integrity` non sopprime piu' l'apertura intervista validata:
+  Dialoghi torna a 3 candidati (`qa_0005`, `qa_0015`, `qa_0026`).
+- Speaker check:
+  - skip con flag `speaker_check_overlapping_spans` per QA same-sentence/intra-frase;
+  - span domanda corto esteso audio-only entro utterance/gap locale max 3s;
+  - `same_speaker_suspected` applica penalita' moderata, salvo pattern socratico/self-answer;
+  - `different_speaker_likely` applica piccolo bonus;
+  - reason codes e breakdown flag esportati nei candidati, `qa_coverage`, metrics e packet.
+- Test mirati: `python -m unittest tests.test_qa_extractor tests.test_qa_speaker_check
+  tests.test_pipeline_config tests.test_ai_review_packet_exporter
+  tests.test_evaluation_run_exporter tests.test_main_cli` -> 147 OK.
+
+Run warm finali (`r5a_speaker_warm_20260704_fix1`, layout `evaluations/<input>/runs/<run>/`):
+
+- deep_time: 3 candidati; speaker `same_speaker_suspected=2`, checked=3, unavailable=0.
+  I due sopra soglia sono penalizzati; il terzo e' sotto soglia (`similarity=0.5268`) e resta intatto.
+- dialoghi: 3 candidati; `qa_0005` riemesso; `qa_0015` non piu' unavailable grazie a
+  `speaker_check_question_span_extended`, poi `same_speaker_suspected` e penalita' applicata.
+- l25p08: 7 candidati invariati; socratici/intra-frase con overlap skip o esenzione,
+  nessuna penalita' sui pattern socratici.
+- stanford: 12 candidati; `same_speaker_suspected=10`, tutti i .73+ penalizzati salvo esenzioni
+  socratiche; i 2 sotto soglia restano senza flag.
+
+## 2026-07-04 - Review esterna R7: adozione incompleta, serve R7.1 (Claude)
+
+Nota di processo: run di nuovo fuori layout (cartelle deep_time/, dialoghi/, stanford/);
+spostate nelle cartelle canoniche da Claude. E' la terza volta: nel prompt R7 il vincolo era
+esplicito, va ribadito a inizio E fine prompt.
+
+Esito review (run r5a_speaker_warm_20260704_fix1):
+
+- Fix regressione R4: RIUSCITO (dialoghi qa_0005 di nuovo emesso, 3 candidati).
+- Overlap exclusion: OK (l25p08 socratici esclusi dal check, nessuna penalita').
+- Span extension: OK (dialoghi qa_0015 ora giudicato, non piu' unavailable).
+- Gate a penalita': DIFETTOSO, comportamento invertito rispetto all'accettazione:
+  - deep_time e stanford: candidati flaggati same_speaker ma confidence IDENTICHE alle run
+    pre-gate -> nessuna penalita' applicata ai target reject;
+  - dialoghi qa_0015 (keep validato, self-answered con answer_responsiveness_strong):
+    penalizzato .7745 -> .5245, unico candidato colpito.
+- Calibrazione soglia: qa_0005 dialoghi (vero scambio intervistatore->ospite) flaggato same a
+  sim .81: la soglia .73 non separa voci maschili nella stessa registrazione. Il flag resta
+  informativo, ma da solo non basta per penalita' forti.
+
+Decisione: R7.1 micro-fix richiesto prima di dichiarare adottato il check:
+1. la penalita' deve applicarsi davvero ai flaggati non esenti (verificare il wiring del gate);
+2. esenzione estesa: self-answered con responsiveness forte (anchor+substance) non si penalizza;
+3. la penalita' scala con la similarita' (es. piena solo sopra .85) invece di soglia secca .73.
+
+## 2026-07-04 - R7.1 speaker penalty wiring + waiver responsive (Codex)
+
+Debug della review `r5a_speaker_warm_20260704_fix1`:
+
+- Nei JSON canonici locali `fix1` la penalita' era gia' presente su diversi target
+  deep_time/stanford, ma il `confidence_label` restava stale dopo il gate. Questo puo' spiegare
+  parte della lettura "confidence identiche" se la review ha confrontato campi derivati o run
+  spostate da label non canonici.
+- Bug reale nel wiring delle esenzioni: il predicato socratico considerava `intra_sentence`
+  ovunque in reason/metadata. Questo esentava troppo (es. candidati `intra_sentence_qa` non
+  veramente socratici). In parallelo mancava il waiver per self-answer didattici forti: dialoghi
+  `qa_0015`, con `answer_responsiveness_strong` + anchor definitoria, riceveva la penalita' piena.
+
+Correzione:
+
+- Penalita' applicata a ogni `same_speaker_suspected` non esente.
+- Esenzione socratica ristretta ai marker forti (`socratic_short_answer_support`,
+  `same_unit_local_answer`, `same_sentence_answer`, `answer_in_same_sentence`).
+- Nuovo waiver `speaker_penalty_waived_responsive` per candidati con
+  `answer_responsiveness_strong` + `answer_responsiveness_anchor` e pattern lessicale/definitorio.
+- Penalita' graduata: zero sotto soglia, lineare tra soglia same-speaker e .85, piena sopra .85;
+  `qa_speaker_check_same_full_penalty_threshold` configurabile da config/CLI/batch.
+- `confidence_label` aggiornato dopo penalty/bonus.
+
+Test mirati:
+
+- `PYTHONDONTWRITEBYTECODE=1 ./.venv/bin/python -m unittest tests.test_qa_extractor
+  tests.test_qa_speaker_check tests.test_pipeline_config tests.test_ai_review_packet_exporter
+  tests.test_evaluation_run_exporter tests.test_main_cli` -> 150 OK.
+
+Run warm canoniche finali: `r5a_speaker_warm_20260704_fix3`.
+
+- deep_time: 3 candidati; `same_speaker_suspected=2`, penalizzati=2.
+  `qa_0005` fix1 .4130, pre_gate .6630, fix3 .5949, sim .7554, penalty .0681.
+  `qa_0020` fix1 .6765, pre_gate .9265, fix3 .8293, sim .7706, penalty .0972.
+  Nota: rispetto ai `pre_gate` sono ridotti; rispetto ai JSON `fix1` locali risultano piu' alti
+  perche' `fix1` aveva gia' una penalita' piena .25.
+- dialoghi: 3 candidati; `same_speaker_suspected=3`, penalizzati=2, waiver responsive=1.
+  `qa_0005` .6635 -> .4895, sim .8105, penalty parziale .1740.
+  `qa_0015` fix1 .5245 -> fix3 .7745, sim .8072, penalty .0000, waiver responsive.
+  `qa_0026` .7350 -> .4850, sim .8552, penalty piena .2500.
+- stanford: 12 candidati; 2 sotto soglia intatti (`qa_0001`, `qa_0004`), 10 same-speaker
+  penalizzati. Sopra soglia .73: penalty graduata da .0216 a .2500. Anche qui alcuni fix3 sono
+  maggiori di fix1 perche' `fix1` locale aveva penalita' piena; tutti i flaggati sono ridotti
+  rispetto a `pre_gate`.
+- l25p08: 7 candidati invariati; overlap skip=3, unavailable=1, checked sotto soglia=2,
+  same-speaker socratico `qa_0009` senza penalita'. Tutte le confidence identiche a `fix1`.
+
+## 2026-07-04 - Review esterna R7.1: NO-GO, confidence base alterata (Claude)
+
+Progressi reali di R7.1: waiver responsive funziona (dialoghi qa_0015 non piu' penalizzato),
+penalita' graduata implementata, run nei label canonici (prima volta senza spostamenti).
+
+Problema bloccante scoperto in review: il calcolo della confidence BASE e' cambiato, non solo il
+gate. Evidenza: stanford qa_0014 ha reason codes identici tra run 105047 e fix3 (unico delta: flag
+same_speaker_suspected) ma confidence .662 -> .8904; il "pre_gate .912" della tabella Codex non
+corrisponde a nessuna run osservata. Effetto netto contro la ground truth delle review:
+
+- reject validati che SALGONO: deep_time qa_0005 (.413->.595), qa_0020 (.677->.829),
+  stanford qa_0014 (.662->.890), qa_0035 (.617->.843), qa_0043 (.662->.793);
+- keep validato che SCENDE: dialoghi qa_0005 (.664->.490, falso same-speaker sim .81);
+- corretti: dialoghi qa_0015 ripristinato, qa_0026 penalizzato, stanford qa_0009/qa_0039 giu'.
+
+Decisione: NO-GO all'adozione. R7.2 richiesto con criterio secco:
+per ogni candidato, confidence = valore delle run 2026-07-04_105xxx (pre-gate osservato)
+meno la sola penalita' speaker graduata; nessun altro cambiamento al calcolo.
+
+## 2026-07-04 - R7.2 fix4: confidence ancorata alla baseline osservata 105xxx (Codex)
+
+Debug:
+
+- La review fix3 era corretta: il gate graduato sottraeva la nuova penalita' dal valore grezzo
+  `confidence_debug.final_confidence` (es. Stanford `qa_0014`: .912 - .0216 = .8904).
+- Le run di riferimento `2026-07-04_105xxx`, pero', avevano gia' applicato il gate legacy pieno
+  sui same-speaker non esenti (es. `.912 - .25 = .662`). Quindi fix3 "riapriva" la confidence
+  base invece di applicare solo il delta speaker richiesto dalla review.
+
+Correzione:
+
+- Il speaker check ora ricostruisce una baseline legacy osservata prima della penalita' graduata:
+  se il candidato avrebbe ricevuto il vecchio gate same-speaker non esente, sottrae prima la
+  vecchia `same_speaker_penalty` piena; se era vecchio-esente/waiver/sotto soglia, non sottrae
+  nulla.
+- La confidence finale diventa: `baseline_105xxx - penalty_graduata`.
+- Aggiunto nel metadata `legacy_baseline_penalty_applied` e `raw_confidence` per audit.
+- Nessun cambio ai pattern di emissione o al calcolo QA base; fix confinato al post-gate speaker.
+
+Test mirati:
+
+- `PYTHONDONTWRITEBYTECODE=1 ./.venv/bin/python -m unittest tests.test_qa_extractor
+  tests.test_qa_speaker_check tests.test_pipeline_config tests.test_ai_review_packet_exporter
+  tests.test_evaluation_run_exporter tests.test_main_cli` -> 152 OK.
+
+Run warm canoniche finali: `r5a_speaker_warm_20260704_fix4`.
+
+Tabella confidence `2026-07-04_105xxx` -> `fix4`:
+
+- deep_time (3 candidati):
+  - `qa_0005`: .4130 -> .3449, sim .7554, penalty .0681, legacy baseline .25.
+  - `qa_0015`: .7005 -> .7005, sim .5268, penalty .0000.
+  - `qa_0020`: .6765 -> .5793, sim .7706, penalty .0972, legacy baseline .25.
+- dialoghi (105040 aveva 2 candidati; fix4 ne ha 3 per il fix R4):
+  - `qa_0005`: non presente in 105040; fix4 .4895, sim .8105, penalty parziale .1740.
+  - `qa_0015`: .7745 -> .7745, sim .8072, waiver responsive, penalty .0000.
+  - `qa_0026`: .7350 -> .4850, sim .8552, penalty piena .2500.
+- stanford (12 candidati):
+  - `qa_0001`: .8240 -> .8240, sotto soglia.
+  - `qa_0004`: .8845 -> .8845, sotto soglia.
+  - `qa_0005`: .5300 -> .3457, sim .8158, penalty .1843.
+  - `qa_0009`: .8885 -> .6385, sim .8918, penalty .2500.
+  - `qa_0011`: .6045 -> .4101, sim .8211, penalty .1944.
+  - `qa_0014`: .6620 -> .6404, sim .7312, penalty .0216.
+  - `qa_0015`: .4215 -> .1715, sim .8888, penalty .2500.
+  - `qa_0018`: .4310 -> .2943, sim .7911, penalty .1367.
+  - `qa_0026`: .7170 -> .4670, sim .8993, penalty .2500.
+  - `qa_0035`: .6165 -> .5931, sim .7321, penalty .0234.
+  - `qa_0039`: .6760 -> .4260, sim .9068, penalty .2500.
+  - `qa_0043`: .6620 -> .5426, sim .7821, penalty .1194.
+- l25p08 (7 candidati, tutti invariati):
+  - `qa_0006`: .4630 -> .4630, overlap skip.
+  - `qa_0009`: .6410 -> .6410, same-speaker socratico/esente.
+  - `qa_0010`: .5180 -> .5180, overlap skip.
+  - `qa_0012`: .5960 -> .5960, unavailable.
+  - `qa_0013`: .7590 -> .7590, sotto soglia.
+  - `qa_0015`: .7235 -> .7235, overlap skip.
+  - `qa_0016`: .7250 -> .7250, sotto soglia.
+
+Verifica automatica: nessun candidato presente nelle run `2026-07-04_105xxx` ha confidence fix4
+maggiore della baseline osservata; non flaggati/esenti/waiver restano identici.
+
+## 2026-07-04 - Review esterna R7.2/fix4: GO, speaker check ADOTTATO (Claude)
+
+Verifica: codice senza ancoraggi hardcoded (riproduce il percorso legacy e sottrae solo il delta
+graduato, con raw_confidence/legacy_baseline_penalty_applied per audit); valori su disco = tabella
+di consegna; nessun candidato sopra la baseline 105xxx.
+
+Effetto contro la ground truth delle review: tutti i reject same-speaker validati scendono, tutti i
+keep restano intatti (waiver responsive incluso). Unico costo noto: dialoghi qa_0005 (keep,
+cross-speaker vero) penalizzato parziale a .4895 per sim .81 sopra soglia - limite della
+discriminazione vocale nella stessa registrazione, documentato e accettato.
+
+DECISIONE: speaker check adottato in quality_local (default ON se modello locale presente).
+Il ciclo R5->R7.2 e' chiuso.
+
+Nota tecnica per un ciclo futuro di pulizia: il fix4 emula la baseline ricalcolando l'esenzione
+legacy; quando il gate sara' stabile, semplificare rendendo quel percorso l'unico canonico.
+
+Prossimi passi decisi:
+1. Refresh del benchmark completo (7 input, warm, speaker check ON) da terminale per la nuova
+   fotografia keep%/quality con il gate attivo; poi rivalutazione esterna.
+2. Frontiera successiva: RECALL sulle interviste (coverage 0.02 su dialoghi), linea gia'
+   pianificata (turn-taking / R5b diarizzazione completa da misurare).
+
+## 2026-07-04 - Fotografia benchmark post-adozione gate (Claude)
+
+Refresh 7 input eseguito da Matteo (run 1843xx, gate ON). Review complete, dettagli in
+evaluations/benchmark_overview_2026-07-03.md (sezione post-adozione).
+
+Numeri: 49 emessi, keep 49%, avgQ ~2.6. Due nuovi emessi dal recovery run-on: eugenia qa_0046
+(revise) e l25p09 qa_0018 (reject: risposta-deflessione 'Non e' essenzialissimo per questo corso'
+con confidence .80).
+
+Scoperta rilevante: la confidence post-gate non discrimina keep/reject (medie .61 vs .55).
+Motivo: sui contenuti didattici i keep sono spesso self-answered same-speaker, mentre i reject
+residui sono semantici (deflessioni, eco, non-responsivita'). Il speaker check resta valido come
+flag di rischio e per i contenuti dialogici, ma non e' un selettore di qualita' generale.
+
+Decisione: prossimo ciclo R8 = RECALL interviste (coverage 0.02-0.06 e' il collo di bottiglia del
+dataset); redesign semantico mirato (reject-flagger per deflessioni) come ciclo successivo.
+Run intermedie fix2 fuori label spostate nei label canonici (deep_time/, dialoghi/, stanford/
+ricreate da Codex: da cancellare a mano di nuovo).
+
+## 2026-07-04 - R8 speaker-assisted rescue soft-gate
+
+Implementato rescue solo `quality_local` e solo con modello speaker disponibile. I candidati
+soppressi da gate soft (`low_autonomy_implicit_question`, `weak_expanded_contextual_question`,
+`surface_answer_cue_risk`, `below_min_qa_confidence` entro margine, `weak_answer_responsiveness`)
+vengono controllati entro budget default 40 check / 8 rescue. Rescue solo con
+`different_speaker_likely`, ancora minima di responsivita', nessun gate duro; i riammessi ricevono
+reason/review flag `speaker_rescued_candidate`. Metrics/coverage includono count, breakdown gate
+origine e tempi del ramo rescue.
+
+Test:
+- `.venv/bin/python -B -m unittest tests.test_qa_speaker_check tests.test_pipeline_config tests.test_ai_review_packet_exporter tests.test_evaluation_run_exporter` -> 34 OK.
+- `.venv/bin/python -B -m unittest tests.test_qa_extractor` -> 114 OK.
+- `.venv/bin/python -B -m unittest tests.test_main_cli` -> 9 OK.
+
+Run warm canoniche: `2026-07-04_210000_r8_speaker_rescue_quality_local_structural`.
+
+Prima -> dopo vs benchmark post-adozione `2026-07-04_1843xx`:
+- dialoghi_di_scienza_ep2_-_astrofisica: 3 -> 7 candidati, coverage 0.0196 -> 0.0458,
+  rescued 4 (`low_autonomy_implicit_question=3`, `surface_answer_cue_risk=1`), suppressed 34 -> 30.
+  I 3 candidati originali (`qa_0005`, `qa_0015`, `qa_0026`) restano byte-equivalenti sui campi QA
+  principali; rescued `qa_0016`, `qa_0031`, `qa_0033`, `qa_0038`, tutti flaggati.
+- deep_time_and_intelligence_panel_q_a_at_mit_2021_unfolding_intelligence_symposium: 3 -> 4,
+  coverage 0.0231 -> 0.0308, rescued 1 (`surface_answer_cue_risk=1`), suppressed 11 -> 10.
+- l25p08: 7 -> 7, coverage 0.1628 invariata, rescued 0, suppressed invariati 10.
+- ssl1p1: 2 -> 2, coverage 0.0333 invariata, rescued 0, suppressed invariati 9.
+
+Tempi ramo rescue / speaker:
+- dialoghi: rescue 14 tentati / 13 checked, 3.0013s; stage qa_extraction 5.198s,
+  qa_speaker_check 0.760s, total 6.402s.
+- deep_time: rescue 4 / 4, 0.7739s; qa_extraction 2.442s, qa_speaker_check 0.524s, total 3.475s.
+- l25p08: rescue 0 / 0, 0.0000s; qa_extraction 1.327s, qa_speaker_check 0.753s, total 2.188s.
+- ssl1p1: rescue 5 / 5, 1.3903s; qa_extraction 2.764s, qa_speaker_check 0.688s, total 3.742s.
+
+Nota: le run sono state scritte solo nei label canonici esistenti sotto `evaluations/`; nessuna nuova
+cartella input tipo `deep_time/` o `dialoghi/` e' stata creata in questo ciclo.
+
+## 2026-07-04 - Review esterna R8: meccanismo validato, output non ancora (Claude)
+
+Run 2026-07-04_210000_r8_speaker_rescue (layout canonico rispettato).
+
+Vincoli di non-regressione: OK (l25p08 e ssl1p1 invariati, zero rescue sui monologhi).
+
+Qualita' dei 5 rescued:
+- 2 VERI scambi intervista prima invisibili su dialoghi (qa_0033 'studiare divulgazione' -> 'bagno
+  di umilta''; qa_0038 relativita' -> analogia del telo): il segnale different-speaker trova il
+  turn-taking genuino. Entrambi revise per span rotti (focus sepolto, risposte troncate).
+- 2 reject da regioni di trascrizione garbled (dialoghi qa_0016, qa_0031): il rumore audio produce
+  sia 'voci diverse' sia testo inutilizzabile: il rescue deve filtrarle.
+- 1 reject su deep_time (qa_0008): vero cross-speaker ma gestione conversazionale.
+
+Verdetto: il MECCANISMO e' la leva recall giusta (primi veri recuperi intervista del progetto),
+l'output non e' ancora adottabile. R8.1 richiesto:
+1. floor di sanita' testuale sui rescued (riusare i sentence quality score esistenti);
+2. filtro gestione conversazionale/check-in applicato anche ai rescued;
+3. boundary/focus trimming sui rescued (focus domanda, risposta al primo periodo integro).
+Atteso su dialoghi: rescued 4 -> ~2 ma utilizzabili (verso keep).
+
+## 2026-07-04 - R8.1 qualita' rescued: implementazione Codex (entry registrata da Claude)
+
+Codex ha implementato (160 test OK) ma non ha potuto committare l'entry per crediti esauriti:
+
+- floor testuale rescue-only + filtro conversazionale rescue-only, con reason code
+  speaker_rescue_rejected_text_quality / speaker_rescue_rejected_conversational;
+- focus trimming domanda e completion risposta sui soli rescued;
+- metrics/coverage con breakdown dei rescue respinti.
+- Run: dialoghi/deep_time/l25p08 2026-07-04_214709, ssl1p1 2026-07-04_214512.
+- MANCANTE (bloccato da crediti): estensione risposta di un'ulteriore sentence quando il
+  completion termina su confine sospeso.
+
+## 2026-07-04 - Review esterna R8.1: filtri validati, rifinitura finale mancante (Claude)
+
+- Filtri VALIDATI: dialoghi 5 candidati (i 2 garbled respinti dal floor testuale), deep_time il
+  conversazionale respinto, l25p08/ssl1p1 invariati. Nessuna regressione.
+- I 2 rescued genuini restano revise: qa_0038 quasi keep (risposta ora sostanziale); qa_0033 con
+  domanda tagliata a meta' sintagma ('studiare a un') e risposta sospesa ('...come si').
+- Restano 2 micro-rifiniture: (a) completion risposta +1 sentence su confine sospeso (la patch
+  bloccata); (b) focus trimming che non tagli dentro un sintagma (confine di frase o di clausola).
+
+Bilancio ciclo R8+R8.1: il recall intervista si e' mosso per la prima volta: dialoghi da 3 a 5
+candidati con 2 scambi genuini nuovi, coverage 0.020 -> ~0.033, zero falsi introdotti dopo i filtri.
+
+## 2026-07-05 - R8.2 chiusura rifiniture rescued (Codex)
+
+Completate le due micro-rifiniture rimaste sul solo percorso rescue:
+
+- completion risposta: se un rescued resta sospeso su un confine sintattico, prova una sola
+  sentence ulteriore; se resta sospeso, ricade all'ultimo periodo integro precedente;
+- focus domanda: il trimming non chiude piu' dentro sintagmi tipo preposizione/articolo, e ricade
+  alla frase interrogativa intera quando un focus pulito non e' isolabile.
+
+Test:
+- `.venv/bin/python -B -m unittest tests.test_qa_speaker_check tests.test_pipeline_config tests.test_ai_review_packet_exporter tests.test_evaluation_run_exporter tests.test_main_cli tests.test_qa_extractor`
+  -> 164 OK.
+
+Run warm canoniche: `2026-07-05_103314_quality_local_structural`.
+
+Esito:
+- dialoghi_di_scienza_ep2_-_astrofisica: 5 candidati, coverage 0.0327, rescued 2
+  (`qa_0033`, `qa_0038`), originali invariati. `qa_0033` ora chiude la domanda su
+  "Che cosa vuol dire studiare" e la risposta su "... ci sono tutte delle tecniche"; `qa_0038`
+  invariato sul rescued pulito.
+- deep_time_and_intelligence_panel_q_a_at_mit_2021_unfolding_intelligence_symposium: 3 candidati,
+  coverage 0.0231, zero rescue emessi; il conversazionale resta respinto.
+- l25p08: 7 candidati, coverage 0.1628, zero rescue, invariato.
+- ssl1p1: 2 candidati, coverage 0.0333, zero rescue, invariato.
+
+Tempi ramo rescue / stage speaker:
+- dialoghi: rescue 14 tentati / 13 checked, 2.8921s; qa_extraction 4.739s,
+  qa_speaker_check 0.719s, total 5.896s.
+- deep_time: rescue 4 / 4, 0.7502s; qa_extraction 2.396s, qa_speaker_check 0.470s,
+  total 3.339s.
+- l25p08: rescue 0 / 0, 0.0000s; qa_extraction 1.308s, qa_speaker_check 0.705s,
+  total 2.114s.
+- ssl1p1: rescue 5 / 5, 1.4068s; qa_extraction 2.729s, qa_speaker_check 0.658s,
+  total 3.679s.
+
+Nessuna nuova cartella input evaluation creata; run scritte nei label canonici esistenti.
+
+## 2026-07-05 - Review esterna R8.2: ciclo recall interviste CHIUSO (Claude)
+
+Accettazione verificata su disco: dialoghi 5, deep_time 3, l25p08 7, ssl1p1 2; rifiniture attive
+(qa_0033 non taglia nel sintagma, qa_0038 chiude su periodo integro); 164 test OK.
+
+Bilancio del ciclo R8->R8.2:
+
+- dialoghi: da 3 a 5 candidati, 2 keep + 3 revise + 0 reject: primo input intervista del progetto
+  senza falsi emessi e con 2 scambi genuini recuperati dal segnale speaker.
+- coverage dialoghi 0.020 -> 0.033; costo rescue ~3s/run; zero regressioni sui monologhi.
+- Difetti residui minori (NON meritano un ciclo dedicato, da accorpare a futura pulizia):
+  1. completion sovra-estende su regioni con punteggiatura rada (qa_0033, 200+ parole):
+     serve cap di lunghezza risposta;
+  2. focus trimming puo' perdere l'oggetto della domanda ('Che cosa vuol dire studiare');
+  3. nota gia' aperta: semplificazione del percorso confidence legacy (fix4).
+
+Prossima decisione strategica (fork gia' nel decision plan):
+A. redesign semantico mirato come reject-flagger per deflessioni/non-responsivita'
+   (i 6 reject ad alta confidence residui del benchmark);
+B. estendere il rescue e la misura recall agli altri contenuti dialogici / nuovi input intervista
+   per consolidare la leva appena costruita.
+
+## 2026-07-05 - Endgame: priorita' lezioni universitarie, piano di chiusura (Claude)
+
+Direzione da Matteo: target primario = lezioni universitarie; budget residuo ~2 prompt Codex;
+poi chiusura prototipo (pulizia, README, documentazione).
+
+Piano registrato nel decision plan:
+- R9 (Codex): precision pack lezioni: dedupe coppie eco, trimming check-in interni allo span,
+  penalita' deflessione, cap lunghezza risposta rescue + focus a clausola completa.
+  Target: l25p09 (keep 29%, caso debole universitario); l25p08 e monologhi invariati.
+- R10 (Codex): pulizia codice: confidence path canonico (via emulazione legacy fix4), censimento
+  flag con default coerenti (speaker ON, rescue ON, semantic OFF), rimozione codice morto,
+  fixture astratte verificate, suite completa verde.
+- Chiusura (Claude + Matteo, zero crediti): benchmark finale da terminale, valutazione e overview
+  conclusiva inizio/fine, README/docs aggiornati, report di chiusura prototipo.
+La linea interviste (rescue) resta nel prototipo come feature validata; estensioni future annotate.
+
+## 2026-07-05 - R9 precision pack: implementazione Codex (entry registrata da Claude)
+
+Codex ha implementato (131 test mirati + 263 suite ampia OK) ma non ha potuto scrivere il diario
+(crediti esauriti): dedupe coppie eco, trim check-in interni allo span risposta, penalita'/gate
+deflessione, cap 80 parole e focus a clausola sui rescued. Run 2026-07-05_140834 sui 4 input.
+Aggiunta post-run una micro-promozione di deflection_answer_penalty a reason primaria nel counter
+di suppression (test mirati verdi, rerun non eseguito per crediti).
+
+## 2026-07-05 - Review esterna R9: 3 obiettivi su 4, regressione dedupe (Claude)
+
+Validati: trim check-in interno (l25p09 qa_0013 ripulito, quasi keep), gate deflessione
+(qa_0018 non emesso), cap rescued (dialoghi ok, zero regressioni su l25p08/ssl1p1).
+
+Regressione: il dedupe eco ha eliminato qa_0008 (unico keep di l25p09) e tenuto qa_0009, l'eco
+con rumore backchannel: il winner e' scelto male. l25p09: 1 keep -> 0 keep.
+
+Difetto minore: il cap rescue tronca ancora sospeso dove la punteggiatura e' rada
+(dialoghi qa_0033 finisce su 'soprattutto e' importante').
+
+Decisione: entrambe le correzioni si accorpano a R10 (pulizia) come requisito 0, senza spendere
+un prompt dedicato:
+- dedupe: nella coppia eco perde il membro la cui DOMANDA duplica la risposta dell'altro;
+  tie-break su minor rumore (penalita' backchannel/troncamento), poi confidence;
+- cap rescue: se nessun periodo integro entro il cap, troncare all'ultimo confine di clausola.
+
+## 2026-07-05 - R10 consolidamento prototipo: fix R9, confidence canonica, flag inventory (Codex)
+
+Obiettivo: chiusura prototipo senza redesign, partendo dalle due correzioni R9
+bloccanti.
+
+Fix R9:
+- Dedupe eco: il vincitore della coppia viene scelto esplicitamente in base a
+  quale domanda duplica/eco la risposta dell'altro candidato. Il candidato eco
+  perde anche se ha confidence piu' alta; in caso ambiguo il tie-break e'
+  minor rumore (backchannel/troncamento/incompletezza), poi confidence.
+- Cap risposta rescue: se il cap non contiene un periodo integro, il testo
+  viene tagliato all'ultimo confine di clausola disponibile prima del cap,
+  evitando code sospese.
+
+Consolidamento/rimozioni:
+- Rimosso il percorso `legacy_baseline_penalty_applied` nello speaker check:
+  la confidence corrente e' ora l'unica base canonica; il payload non esporta
+  piu' `legacy_baseline_penalty_applied` ne' `raw_confidence`.
+- Rimosso il context extraction legacy usato solo per emulare il vecchio
+  quality gate: le quality features usano lo stesso context canonico esportato.
+  Il rischio `thin_context_risk` resta esplicito quando il selector trova solo
+  contesto candidato troppo fragile.
+- Rimossi commenti di vecchi default (`#False`, `#"local_rule_based"`) dai
+  campi semantici in config.
+- Fixture test: rimosso il residuo testuale reale nel test QA di superficie,
+  sostituito con marker astratti.
+
+Inventario flag/config finale:
+- `pipeline_profile`: default `current`; profili supportati `current`, `light`,
+  `quality`, `quality_local`, `full`, `diagnostic`.
+- Speaker check: `qa_speaker_check_enabled` default auto, cioe' ON quando esiste
+  `local_models/spkrec-ecapa-voxceleb`; `qa_speaker_check_model_path` default
+  quel path locale. CLI: `--enable-qa-speaker-check` forza ON, `--qa-speaker-model-path`
+  cambia path; nessun download runtime.
+- Rescue speaker-assisted: ON in pratica dentro `quality_local` quando speaker
+  check e modello sono disponibili; default cap controlli `40`, candidati `8`,
+  confidence margin `0.08`, min text quality `0.50`, answer word cap `80`.
+  `--qa-speaker-rescue-max-checks 0` o `--qa-speaker-rescue-max-candidates 0`
+  disattivano rispettivamente checks/emissione.
+- Semantic responsiveness: default OFF; `--enable-qa-semantic-responsiveness`
+  abilita scoring sui candidati gia' estratti; gate default OFF e si abilita
+  solo con `--enable-qa-semantic-responsiveness-gate`. Default modello:
+  `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2`, max candidati
+  `15`, soglia gate `0.45`, penalty `0.12`.
+
+Verifiche:
+- Test mirati R9/config/CLI: 9 OK.
+- Suite completa unittest escluso `test_placeholder_cli`: 270 OK.
+- `test_placeholder_cli` resta escluso per ambiente pytest rotto:
+  `ImportError: cannot import name '__version__' from '_pytest'`.
+- Warm L25P09 con `.venv/bin/python`: 5 candidati; `qa_0008` presente con
+  domanda definitoria "Cosa significa assentoticamente stabile?", `qa_0009`
+  non emesso.
+- Warm Dialoghi con `.venv/bin/python`: 5 candidati; `qa_0033` presente e
+  risposta chiusa su clausola ("il sapere e' molto variegato"), non su coda
+  sospesa.
+
+## 2026-07-05 - Valutazione benchmark FINALE (Claude): un ultimo fix richiesto
+
+Run 2026-07-05_1341xx (default consolidati: speaker check + rescue ON). Nota: fallita solo
+uitest_eval_del.mp3, file di test residuo in ExerPlazaSample/input da rimuovere.
+
+Esiti positivi verificati:
+- l25p09: fix dedupe OK (qa_0008 keep tenuto, qa_0009 eco eliminata): 1 keep + 3 revise + 1 reject.
+- ssl1p1: 0 candidati = comportamento corretto (i 2 falsi storici soppressi).
+- stanford: reject validato qa_0009 soppresso.
+- dialoghi e deep_time: invariati.
+
+DIFETTO BLOCCANTE per la chiusura: il consolidamento R10 ha promosso thin_context_risk a gate di
+soppressione. Effetto: 4 keep validati persi (eugenia qa_0001/qa_0034/qa_0055, l25p08 qa_0006)
+per contesto sottile con Q/A valida. Viola il criterio di progetto 'il contesto resta secondario
+e non deve cambiare da solo l emissione Q/A'.
+
+Decisione: R10.1 (ultimo micro-fix): thin_context_risk torna penalita'/review flag, MAI gate di
+emissione. Dopo il fix e un rerun di verifica su eugenia+l25p08, si chiude la fase sviluppo e si
+passa alla documentazione.
+
+Tally finale atteso post-R10.1 (stima): ~45 emessi, keep ~24 (53%), reject ~8 (18%), con ssl1p1
+a zero falsi e l25p08 ~86% keep.
+
+## 2026-07-05 - R10.1 fix thin_context: implementazione Codex (entry registrata da Claude)
+
+Codex (127 test OK, diary bloccato da crediti): thin_context_risk non e' piu' gate autonomo;
+i rischi solo-contesto emettono con flag/penalty; short-answer socratici usano score
+neutralizzato dai rischi di contesto. Run: eugenia 140515 (15), l25p08 140533 (7),
+ssl1p1 140018 (0), l25p09 140033 (5).
+
+## 2026-07-05 - Review R10.1: GO. FASE SVILUPPO PROTOTIPO CHIUSA (Claude)
+
+Verificato su disco: i 4 keep tornati (eugenia qa_0001/0006/0034/0055, l25p08 qa_0006),
+ssl1p1 resta 0, l25p09 resta 5. Fix conforme ai criteri.
+
+FOTOGRAFIA CONCLUSIVA in evaluations/benchmark_overview_2026-07-03.md:
+46 emessi, keep 24 (52%), revise 14 (30%), reject 8 (17%); avgQ 2.86 -> 3.14.
+Rispetto all'inizio: falsi sistematici eliminati, ssl1p1 a zero, l25p08 Q4/86%,
+rescue interviste attivo, speaker check adottato, coverage misurabile.
+Limiti noti documentati nell'overview (diarizzazione panel, recall interviste,
+reject semantici, deittici, soglie speaker).
+
+Da qui: solo documentazione (README en/it, docs/, report chiusura) a carico di Claude.
+Igiene manuale rimasta: uitest_eval_del.mp3 in ExerPlazaSample/input; cartelle vuote
+deep_time/ dialoghi/ stanford/ in evaluations/; run intermedia l25p09/215134.
+
+## 2026-07-05 - Chiusura documentale (Claude)
+
+Aggiornati: README.md (profilo quality_local raccomandato, sezione speaker check/rescue con setup
+modello, stato prototipo con numeri finali, requisiti runtime), README.it.md (pipeline a 16 step,
+stato prototipo, setup speaker, limiti noti estesi), docs/local_installation.md (setup modello
+ECAPA + scorer semantico opzionale), docs/quality_evaluation.md (Final Prototype Snapshot con
+tabella per input), docs/repository_status.md (nota di congelamento). Nuovo:
+docs/prototype_closure_report.md (obiettivo e verdetto, numeri finali, cosa e' stato costruito
+R1-R10.1, metodo validato, limiti noti ordinati per impatto, come riprendere lo sviluppo).
+
+Il prototipo Lecture QA Extraction e' CHIUSO: codice congelato a R10.1, benchmark valutato,
+documentazione allineata.
+
+## 2026-07-05 - Bozza JSON Schema del contratto di sessione (Claude)
+
+Generata docs/session_schema_draft.json dalla struttura reale di una sessione esportata
+(tipi di primo livello + campi principali di candidate/timing). Bozza descrittiva, non
+vincolante: da promuovere a contratto formale solo con una politica di versionamento dello
+schema. Riferita dalla documentazione di tesi (sez. 12.2).

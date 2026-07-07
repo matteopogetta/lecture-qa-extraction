@@ -42,6 +42,21 @@ class AIReviewPacketExporterTests(unittest.TestCase):
         self.assertIn("qa_001", packet)
         self.assertIn("local_rule_based", packet)
         self.assertIn("pipeline_profile: `light`", packet)
+        self.assertIn("## Coverage Summary", packet)
+        self.assertLess(
+            packet.index("## Timing Summary"),
+            packet.index("## Coverage Summary"),
+        )
+        self.assertLess(
+            packet.index("## Coverage Summary"),
+            packet.index("## Timing Stage Details"),
+        )
+        self.assertIn("interrogative_sentence_count: `2`", packet)
+        self.assertIn("coverage_ratio: `0.5`", packet)
+        self.assertIn(
+            "suppressed_by_gate_reasons: `same_sentence_without_answer_cue=1`",
+            packet,
+        )
         self.assertIn("## Timing Stage Details", packet)
         self.assertIn("| transcription | reused_from_cache | 0 | 0.0% | yes", packet)
         self.assertIn("zero_or_near_zero_reused_stages: `transcription`", packet)
@@ -71,6 +86,15 @@ class AIReviewPacketExporterTests(unittest.TestCase):
                 "pipeline_profile": "light",
                 "pipeline_execution_mode": "normal",
                 "segmentation_mode": "structural",
+                "qa_coverage": {
+                    "interrogative_sentence_count": 2,
+                    "emitted_candidate_count": 1,
+                    "coverage_ratio": 0.5,
+                    "suppressed_by_gate_count": 1,
+                    "suppressed_by_gate_reasons": {
+                        "same_sentence_without_answer_cue": 1,
+                    },
+                },
             },
             transcript_text=(
                 "We are introducing linear algebra objects. "

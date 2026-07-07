@@ -17,6 +17,18 @@ from lecture_analyzer.output.ai_review_packet_exporter import build_ai_review_pa
 
 
 _SAFE_NAME_RE = re.compile(r"[^a-z0-9._-]+")
+_NORMALIZED_AUDIO_SUFFIX_RE = re.compile(r"_mono_\d+hz$")
+_CANONICAL_INPUT_LABEL_ALIASES = {
+    "dialoghi_di_scienza_ep2_dialoghi_di_scienza_ep2_-_astrofisica": (
+        "dialoghi_di_scienza_ep2_-_astrofisica"
+    ),
+    "dialoghi_di_scienza_ep2_astrofisica": (
+        "dialoghi_di_scienza_ep2_-_astrofisica"
+    ),
+    "stanford_seminar_human_centered_explainable_ai_from_algorithms_to_user_experiences": (
+        "stanford_seminar_-_human-centered_explainable_ai_from_algorithms_to_user_experiences"
+    ),
+}
 
 
 def export_evaluation_run(
@@ -33,7 +45,7 @@ def export_evaluation_run(
 
     source_path = Path(source_json_path).expanduser().resolve()
     root_path = Path(evaluation_root).expanduser().resolve()
-    resolved_input_label = _sanitize_name(
+    resolved_input_label = _canonical_input_label(
         input_label or _derive_input_label(session),
         fallback="session",
     )
@@ -177,6 +189,14 @@ def build_evaluation_metrics(
             "sentence_count": len(payload.get("sentences") or []),
         },
         "qa_quality_metrics": _qa_quality_metrics(qa_candidates),
+        "semantic_responsiveness_metrics": _as_dict(
+            metadata.get("qa_semantic_responsiveness"),
+        ),
+        "qa_coverage": _qa_coverage_metrics(
+            metadata.get("qa_coverage"),
+            emitted_candidate_count=qa_candidate_count,
+        ),
+        "qa_speaker_check": _as_dict(metadata.get("qa_speaker_check")),
         "timing_summary": timing_summary,
         "runtime_metrics": {
             "total_duration_seconds": total_duration_seconds,
@@ -266,6 +286,15 @@ def _resolve_unique_run_label(runs_root: Path, requested_label: str) -> str:
     return candidate
 
 
+def _canonical_input_label(value: str, *, fallback: str) -> str:
+    """Return the canonical benchmark label used under evaluations/."""
+
+    label = _sanitize_name(value, fallback=fallback)
+    label = re.sub(r"^\d+_", "", label)
+    label = _NORMALIZED_AUDIO_SUFFIX_RE.sub("", label)
+    return _CANONICAL_INPUT_LABEL_ALIASES.get(label, label)
+
+
 def _input_source_metrics(input_sources: list[object]) -> list[dict[str, Any]]:
     """Return stable input identity fields without reading media content."""
 
@@ -338,6 +367,14 @@ def _qa_quality_metrics(qa_candidates: list[dict[str, Any]]) -> dict[str, Any]:
         )
         if score is not None
     ]
+    semantic_responsiveness_scores = [
+        score
+        for score in (
+            _safe_float(features.get("semantic_responsiveness_score"))
+            for features in quality_features
+        )
+        if score is not None
+    ]
     quality_band_counts = _count_string_values(
         features.get("quality_band") for features in quality_features
     )
@@ -363,6 +400,9 @@ def _qa_quality_metrics(qa_candidates: list[dict[str, Any]]) -> dict[str, Any]:
         "answer_responsiveness_score": _score_distribution(
             answer_responsiveness_scores,
         ),
+        "semantic_responsiveness_score": _score_distribution(
+            semantic_responsiveness_scores,
+        ),
         "quality_band_counts": {
             "high": quality_band_counts.get("high", 0),
             "medium": quality_band_counts.get("medium", 0),
@@ -386,6 +426,161 @@ def _qa_quality_metrics(qa_candidates: list[dict[str, Any]]) -> dict[str, Any]:
             risk_score=risk_score_distribution,
             quality_band_counts=quality_band_counts,
             risk_band_counts=risk_band_counts,
+        ),
+    }
+
+
+def _qa_coverage_metrics(
+    coverage: object,
+    *,
+    emitted_candidate_count: int,
+) -> dict[str, Any]:
+    """Return aggregate QA coverage metrics without candidate-level detail."""
+
+    coverage_payload = _as_dict(coverage)
+    interrogative_sentence_count = int(
+        _safe_float(
+            coverage_payload.get("interrogative_sentence_count"),
+            0.0,
+        )
+        or 0,
+    )
+    emitted_count = int(
+        _safe_float(
+            coverage_payload.get("emitted_candidate_count"),
+            float(emitted_candidate_count),
+        )
+        or 0,
+    )
+    suppressed_reasons = {
+        str(reason): int(_safe_float(count, 0.0) or 0)
+        for reason, count in _as_dict(
+            coverage_payload.get("suppressed_by_gate_reasons"),
+        ).items()
+        if str(reason).strip()
+    }
+    rescued_reasons = {
+        str(reason): int(_safe_float(count, 0.0) or 0)
+        for reason, count in _as_dict(
+            coverage_payload.get("rescued_by_gate_reasons"),
+        ).items()
+        if str(reason).strip()
+    }
+    rescue_rejected_reasons = {
+        str(reason): int(_safe_float(count, 0.0) or 0)
+        for reason, count in _as_dict(
+            coverage_payload.get("speaker_rescue_rejected_reasons"),
+        ).items()
+        if str(reason).strip()
+    }
+    speaker_check_flag_counts = {
+        str(flag): int(_safe_float(count, 0.0) or 0)
+        for flag, count in _as_dict(
+            coverage_payload.get("speaker_check_flag_counts"),
+        ).items()
+        if str(flag).strip()
+    }
+    suppressed_count = int(
+        _safe_float(
+            coverage_payload.get("suppressed_by_gate_count"),
+            float(sum(suppressed_reasons.values())),
+        )
+        or 0,
+    )
+    return {
+        "interrogative_sentence_count": interrogative_sentence_count,
+        "emitted_candidate_count": emitted_count,
+        "coverage_ratio": (
+            round(emitted_count / interrogative_sentence_count, 4)
+            if interrogative_sentence_count
+            else 0
+        ),
+        "suppressed_by_gate_count": suppressed_count,
+        "suppressed_by_gate_reasons": dict(sorted(suppressed_reasons.items())),
+        "rescued_candidate_count": int(
+            _safe_float(coverage_payload.get("rescued_candidate_count"), 0.0) or 0,
+        ),
+        "rescued_by_gate_reasons": dict(sorted(rescued_reasons.items())),
+        "speaker_rescue_attempted_candidate_count": int(
+            _safe_float(
+                coverage_payload.get("speaker_rescue_attempted_candidate_count"),
+                0.0,
+            )
+            or 0,
+        ),
+        "speaker_rescue_checked_candidate_count": int(
+            _safe_float(
+                coverage_payload.get("speaker_rescue_checked_candidate_count"),
+                0.0,
+            )
+            or 0,
+        ),
+        "speaker_rescue_unavailable_candidate_count": int(
+            _safe_float(
+                coverage_payload.get("speaker_rescue_unavailable_candidate_count"),
+                0.0,
+            )
+            or 0,
+        ),
+        "speaker_rescue_skipped_candidate_count": int(
+            _safe_float(
+                coverage_payload.get("speaker_rescue_skipped_candidate_count"),
+                0.0,
+            )
+            or 0,
+        ),
+        "speaker_rescue_rejected_candidate_count": int(
+            _safe_float(
+                coverage_payload.get("speaker_rescue_rejected_candidate_count"),
+                0.0,
+            )
+            or 0,
+        ),
+        "speaker_rescue_rejected_reasons": dict(
+            sorted(rescue_rejected_reasons.items()),
+        ),
+        "speaker_rescue_total_check_seconds": round(
+            _safe_float(
+                coverage_payload.get("speaker_rescue_total_check_seconds"),
+                0.0,
+            )
+            or 0.0,
+            4,
+        ),
+        "speaker_rescue_check_cap_reached": bool(
+            coverage_payload.get("speaker_rescue_check_cap_reached"),
+        ),
+        "speaker_rescue_candidate_cap_reached": bool(
+            coverage_payload.get("speaker_rescue_candidate_cap_reached"),
+        ),
+        "speaker_check_flag_counts": dict(sorted(speaker_check_flag_counts.items())),
+        "speaker_check_checked_candidate_count": int(
+            _safe_float(
+                coverage_payload.get("speaker_check_checked_candidate_count"),
+                0.0,
+            )
+            or 0,
+        ),
+        "speaker_check_unavailable_candidate_count": int(
+            _safe_float(
+                coverage_payload.get("speaker_check_unavailable_candidate_count"),
+                0.0,
+            )
+            or 0,
+        ),
+        "speaker_check_skipped_candidate_count": int(
+            _safe_float(
+                coverage_payload.get("speaker_check_skipped_candidate_count"),
+                0.0,
+            )
+            or 0,
+        ),
+        "speaker_check_precomputed_candidate_count": int(
+            _safe_float(
+                coverage_payload.get("speaker_check_precomputed_candidate_count"),
+                0.0,
+            )
+            or 0,
         ),
     }
 

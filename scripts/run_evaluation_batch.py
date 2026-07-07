@@ -33,6 +33,18 @@ MEDIA_EXTENSIONS = {
     ".webm",
 }
 SAFE_NAME_RE = re.compile(r"[^a-z0-9._-]+")
+_NORMALIZED_AUDIO_SUFFIX_RE = re.compile(r"_mono_\d+hz$")
+_CANONICAL_INPUT_LABEL_ALIASES = {
+    "dialoghi_di_scienza_ep2_dialoghi_di_scienza_ep2_-_astrofisica": (
+        "dialoghi_di_scienza_ep2_-_astrofisica"
+    ),
+    "dialoghi_di_scienza_ep2_astrofisica": (
+        "dialoghi_di_scienza_ep2_-_astrofisica"
+    ),
+    "stanford_seminar_human_centered_explainable_ai_from_algorithms_to_user_experiences": (
+        "stanford_seminar_-_human-centered_explainable_ai_from_algorithms_to_user_experiences"
+    ),
+}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -79,6 +91,10 @@ def main(argv: list[str] | None = None) -> int:
         "force_recompute": args.force_recompute,
         "resume": args.resume,
         "skip_full_preflight": args.skip_full_preflight,
+        "qa_semantic_responsiveness_enabled": args.enable_qa_semantic_responsiveness,
+        "qa_semantic_responsiveness_gate_enabled": (
+            args.enable_qa_semantic_responsiveness_gate
+        ),
         "dry_run": args.dry_run,
         "code_snapshot": code_snapshot,
         "runs": [],
@@ -129,6 +145,35 @@ def main(argv: list[str] | None = None) -> int:
                 profile=profile,
                 segmentation_mode=args.segmentation_mode,
                 force_recompute=args.force_recompute,
+                enable_qa_semantic_responsiveness=(
+                    args.enable_qa_semantic_responsiveness
+                ),
+                qa_semantic_responsiveness_model=(
+                    args.qa_semantic_responsiveness_model
+                ),
+                qa_semantic_responsiveness_max_candidates=(
+                    args.qa_semantic_responsiveness_max_candidates
+                ),
+                enable_qa_semantic_responsiveness_gate=(
+                    args.enable_qa_semantic_responsiveness_gate
+                ),
+                qa_semantic_responsiveness_gate_min_score=(
+                    args.qa_semantic_responsiveness_gate_min_score
+                ),
+                qa_semantic_responsiveness_gate_penalty=(
+                    args.qa_semantic_responsiveness_gate_penalty
+                ),
+                enable_qa_speaker_check=args.enable_qa_speaker_check,
+                qa_speaker_model_path=args.qa_speaker_model_path,
+                qa_speaker_min_span_seconds=args.qa_speaker_min_span_seconds,
+                qa_speaker_same_threshold=args.qa_speaker_same_threshold,
+                qa_speaker_same_full_penalty_threshold=(
+                    args.qa_speaker_same_full_penalty_threshold
+                ),
+                qa_speaker_different_threshold=(
+                    args.qa_speaker_different_threshold
+                ),
+                qa_speaker_same_penalty=args.qa_speaker_same_penalty,
             )
             print(
                 f"\n[{input_label}] profile={profile} "
@@ -256,6 +301,91 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional prefix added to evaluation input labels.",
     )
     parser.add_argument(
+        "--enable-qa-semantic-responsiveness",
+        action="store_true",
+        help=(
+            "Enable optional local semantic responsiveness scoring in main.py. "
+            "Default is off."
+        ),
+    )
+    parser.add_argument(
+        "--qa-semantic-responsiveness-model",
+        default=None,
+        help="Local path or already-cached model id passed to main.py.",
+    )
+    parser.add_argument(
+        "--qa-semantic-responsiveness-max-candidates",
+        type=int,
+        default=None,
+        help="Maximum extracted QA candidates scored by semantic responsiveness.",
+    )
+    parser.add_argument(
+        "--enable-qa-semantic-responsiveness-gate",
+        action="store_true",
+        help=(
+            "Enable the optional semantic responsiveness penalty gate in main.py. "
+            "Default is off."
+        ),
+    )
+    parser.add_argument(
+        "--qa-semantic-responsiveness-gate-min-score",
+        type=float,
+        default=None,
+        help="Semantic responsiveness score threshold passed to main.py.",
+    )
+    parser.add_argument(
+        "--qa-semantic-responsiveness-gate-penalty",
+        type=float,
+        default=None,
+        help="Semantic responsiveness gate penalty passed to main.py.",
+    )
+    parser.add_argument(
+        "--enable-qa-speaker-check",
+        action="store_true",
+        help=(
+            "Force the local QA speaker-change check in main.py; otherwise "
+            "main.py auto-enables it only when the configured local model exists."
+        ),
+    )
+    parser.add_argument(
+        "--qa-speaker-model-path",
+        default=None,
+        help=(
+            "Local speaker embedding model directory passed to main.py. "
+            "No download is attempted when it is missing."
+        ),
+    )
+    parser.add_argument(
+        "--qa-speaker-min-span-seconds",
+        type=float,
+        default=None,
+        help="Minimum span seconds for the speaker check passed to main.py.",
+    )
+    parser.add_argument(
+        "--qa-speaker-same-threshold",
+        type=float,
+        default=None,
+        help="Same-speaker similarity threshold passed to main.py.",
+    )
+    parser.add_argument(
+        "--qa-speaker-same-full-penalty-threshold",
+        type=float,
+        default=None,
+        help="Full same-speaker penalty threshold passed to main.py.",
+    )
+    parser.add_argument(
+        "--qa-speaker-different-threshold",
+        type=float,
+        default=None,
+        help="Different-speaker similarity threshold passed to main.py.",
+    )
+    parser.add_argument(
+        "--qa-speaker-same-penalty",
+        type=float,
+        default=None,
+        help="Same-speaker penalty passed to main.py.",
+    )
+    parser.add_argument(
         "--python",
         default="python",
         help="Python executable used to launch main.py. Default: python.",
@@ -310,6 +440,19 @@ def _build_run_record(
     profile: str,
     segmentation_mode: str,
     force_recompute: bool,
+    enable_qa_semantic_responsiveness: bool,
+    qa_semantic_responsiveness_model: str | None,
+    qa_semantic_responsiveness_max_candidates: int | None,
+    enable_qa_semantic_responsiveness_gate: bool,
+    qa_semantic_responsiveness_gate_min_score: float | None,
+    qa_semantic_responsiveness_gate_penalty: float | None,
+    enable_qa_speaker_check: bool = False,
+    qa_speaker_model_path: str | None = None,
+    qa_speaker_min_span_seconds: float | None = None,
+    qa_speaker_same_threshold: float | None = None,
+    qa_speaker_same_full_penalty_threshold: float | None = None,
+    qa_speaker_different_threshold: float | None = None,
+    qa_speaker_same_penalty: float | None = None,
 ) -> dict[str, Any]:
     """Return one planned batch run record with its command."""
 
@@ -333,6 +476,65 @@ def _build_run_record(
     ]
     if force_recompute:
         command.append("--force-recompute")
+    if enable_qa_semantic_responsiveness:
+        command.append("--enable-qa-semantic-responsiveness")
+    if qa_semantic_responsiveness_model is not None:
+        command.extend(
+            [
+                "--qa-semantic-responsiveness-model",
+                qa_semantic_responsiveness_model,
+            ],
+        )
+    if qa_semantic_responsiveness_max_candidates is not None:
+        command.extend(
+            [
+                "--qa-semantic-responsiveness-max-candidates",
+                str(qa_semantic_responsiveness_max_candidates),
+            ],
+        )
+    if enable_qa_semantic_responsiveness_gate:
+        command.append("--enable-qa-semantic-responsiveness-gate")
+    if qa_semantic_responsiveness_gate_min_score is not None:
+        command.extend(
+            [
+                "--qa-semantic-responsiveness-gate-min-score",
+                str(qa_semantic_responsiveness_gate_min_score),
+            ],
+        )
+    if qa_semantic_responsiveness_gate_penalty is not None:
+        command.extend(
+            [
+                "--qa-semantic-responsiveness-gate-penalty",
+                str(qa_semantic_responsiveness_gate_penalty),
+            ],
+        )
+    if enable_qa_speaker_check:
+        command.append("--enable-qa-speaker-check")
+    if qa_speaker_model_path is not None:
+        command.extend(["--qa-speaker-model-path", qa_speaker_model_path])
+    if qa_speaker_min_span_seconds is not None:
+        command.extend(
+            ["--qa-speaker-min-span-seconds", str(qa_speaker_min_span_seconds)],
+        )
+    if qa_speaker_same_threshold is not None:
+        command.extend(
+            ["--qa-speaker-same-threshold", str(qa_speaker_same_threshold)],
+        )
+    if qa_speaker_same_full_penalty_threshold is not None:
+        command.extend(
+            [
+                "--qa-speaker-same-full-penalty-threshold",
+                str(qa_speaker_same_full_penalty_threshold),
+            ],
+        )
+    if qa_speaker_different_threshold is not None:
+        command.extend(
+            ["--qa-speaker-different-threshold", str(qa_speaker_different_threshold)],
+        )
+    if qa_speaker_same_penalty is not None:
+        command.extend(
+            ["--qa-speaker-same-penalty", str(qa_speaker_same_penalty)],
+        )
     return {
         "input_file": str(media_path),
         "input_label": input_label,
@@ -513,10 +715,19 @@ if problems:
 def _build_input_label(media_path: Path, prefix: str | None) -> str:
     """Return a stable evaluation input label for a media file."""
 
-    label = _sanitize_name(media_path.stem, fallback="input")
+    label = _canonical_input_label(media_path.stem, fallback="input")
     if prefix:
-        return f"{_sanitize_name(prefix, fallback='batch')}_{label}"
+        return f"{_canonical_input_label(prefix, fallback='batch')}_{label}"
     return label
+
+
+def _canonical_input_label(value: str, *, fallback: str) -> str:
+    """Return the canonical benchmark label used under evaluations/."""
+
+    label = _sanitize_name(value, fallback=fallback)
+    label = re.sub(r"^\d+_", "", label)
+    label = _NORMALIZED_AUDIO_SUFFIX_RE.sub("", label)
+    return _CANONICAL_INPUT_LABEL_ALIASES.get(label, label)
 
 
 def _sanitize_name(value: str, *, fallback: str) -> str:

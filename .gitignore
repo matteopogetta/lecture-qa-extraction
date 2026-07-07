@@ -15,6 +15,7 @@ venv/
 # Tooling caches
 .pytest_cache/
 .mypy_cache/
+.hf_cache/
 
 # Build artifacts
 dist/
@@ -22,6 +23,7 @@ build/
 *.egg-info/
 
 # Runtime output
+PROJECT_DIARY.md
 output/
 !output/
 !output/*.py
