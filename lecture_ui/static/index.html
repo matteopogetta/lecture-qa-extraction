@@ -159,6 +159,8 @@
   .confbar{height:8px; background:var(--chip); border-radius:6px; overflow:hidden; margin-top:6px}
   .confbar > i{display:block; height:100%; border-radius:6px}
   .jump-row{display:flex; gap:8px; margin:14px 0}
+  details.adv summary,details.codes summary{cursor:pointer; color:var(--muted); font-size:12.5px}
+  details.adv{margin-top:6px}
   details.codes{margin-top:6px}
   details.codes summary{cursor:pointer; color:var(--muted); font-size:12px}
   details.codes .kv{margin-top:8px}
@@ -281,6 +283,8 @@
     <input type="search" id="filter" placeholder="Filtra sessioni..." autocomplete="off" />
     <select id="sessionSelect"><option value="">Caricamento sessioni...</option></select>
     <button class="btn primary" id="loadBtn">Apri</button>
+    <button class="btn" id="openPathBtn" title="Apri un session.json da un percorso qualsiasi">Apri da percorso…</button>
+    <button class="btn" id="addFolderBtn" title="Aggiungi una cartella da scansionare (es. output Docker)">Cartella…</button>
     <button class="btn" id="newBtn" title="Analizza una nuova registrazione">+ Nuova analisi</button>
     <button class="btn" id="structBtn" disabled title="Vista strutturata dei dati della sessione">Struttura</button>
     <button class="btn" id="exportBtn" disabled title="Scarica il session.json">JSON</button>
@@ -387,6 +391,27 @@
           <div class="opt check"><input type="checkbox" id="optEval" /><label for="optEval">Valutazione qualità (metrics)</label></div>
         </div>
         <div class="hint" id="evalModeHint" style="margin-top:8px"></div>
+        <div class="opts" id="ioFields" style="margin-top:12px">
+          <div class="opt"><label>Percorso file locale (invece di caricarlo)</label><input type="text" id="optInputPath" placeholder="/Users/…/input/lezione.mp4" /></div>
+          <div class="opt" id="outputDirField"><label>Cartella output (modalità diretta)</label><input type="text" id="optOutputDir" placeholder="/Users/…/output/lezione" /></div>
+        </div>
+        <details class="adv" id="advBox" style="margin-top:12px">
+          <summary>Opzioni avanzate (modalità diretta)</summary>
+          <div class="opts" style="margin-top:10px">
+            <div class="opt"><label>Speaker: num / min / max</label>
+              <div style="display:flex; gap:6px">
+                <input type="text" id="optNumSpk" placeholder="num" style="width:33%" />
+                <input type="text" id="optMinSpk" placeholder="min" style="width:33%" />
+                <input type="text" id="optMaxSpk" placeholder="max" style="width:33%" />
+              </div></div>
+            <div class="opt"><label>Compute type (trascrizione)</label>
+              <select id="optCompute"><option value="auto" selected>auto</option><option value="int8">int8</option><option value="int8_float16">int8_float16</option><option value="float16">float16</option><option value="float32">float32</option></select></div>
+            <div class="opt"><label>Formato audio normalizzato</label>
+              <select id="optNaf"><option value="wav" selected>wav</option><option value="flac">flac</option></select></div>
+            <div class="opt check"><input type="checkbox" id="optNoCache" /><label for="optNoCache">Disabilita cache trascrizione</label></div>
+            <div class="opt check"><input type="checkbox" id="optForceNorm" /><label for="optForceNorm">Forza rinormalizzazione audio</label></div>
+          </div>
+        </details>
       </div>
       <!-- progress view -->
       <div id="progressView" class="hidden">
@@ -495,20 +520,41 @@ $('#loadBtn').addEventListener('click', ()=>{ const p=$('#sessionSelect').value;
 $('#sessionSelect').addEventListener('dblclick', ()=>{ const p=$('#sessionSelect').value; if(p) loadSession(p); });
 
 // ---- load a session ----
+function applySessionPayload(j){
+  state.data=j.session; state.sessionPath=j.session_path; state.audioUrl=j.audio_url;
+  normalize(); renderAll(); setupAudio(j.audio_url, j.audio_available);
+  $('#exportBtn').disabled=false; $('#structBtn').disabled=false;
+}
 async function loadSession(path){
   $('#loadBtn').disabled=true; $('#loadBtn').textContent='...';
   try{
     const r = await fetch('/api/session?path='+encodeURIComponent(path));
     const j = await r.json();
     if(j.error){ alert('Errore: '+j.error); return; }
-    state.data=j.session; state.sessionPath=j.session_path; state.audioUrl=j.audio_url;
-    normalize();
-    renderAll();
-    setupAudio(j.audio_url, j.audio_available);
-    $('#exportBtn').disabled=false; $('#structBtn').disabled=false;
+    applySessionPayload(j);
   }catch(e){ alert('Errore nel caricamento: '+e.message); }
   finally{ $('#loadBtn').disabled=false; $('#loadBtn').textContent='Apri'; }
 }
+$('#openPathBtn').addEventListener('click', async ()=>{
+  const p=prompt('Percorso completo di un session.json da aprire\n(es. output Docker, o un file passato da altri):');
+  if(!p||!p.trim()) return;
+  try{
+    const r=await fetch('/api/open?path='+encodeURIComponent(p.trim())); const j=await r.json();
+    if(j.error){ alert('Errore: '+j.error); return; }
+    applySessionPayload(j);
+    await loadSessions();
+  }catch(e){ alert('Errore: '+e.message); }
+});
+$('#addFolderBtn').addEventListener('click', async ()=>{
+  const p=prompt('Percorso di una cartella con output della pipeline da scansionare\n(le sue run compariranno nel menu):');
+  if(!p||!p.trim()) return;
+  try{
+    const r=await fetch('/api/add_folder?path='+encodeURIComponent(p.trim())); const j=await r.json();
+    if(j.error){ alert('Errore: '+j.error); return; }
+    state.sessions=j.sessions||[]; renderSessionOptions();
+    alert('Cartella aggiunta. Sessioni disponibili ora: '+state.sessions.length);
+  }catch(e){ alert('Errore: '+e.message); }
+});
 
 function normalize(){
   const d=state.data;
@@ -844,6 +890,8 @@ function syncEvalMode(){
     const cb=$('#'+id); if(!cb)return; cb.disabled=ev;
     const row=cb.closest('.opt'); if(row) row.style.opacity=ev?0.45:1;
   });
+  const odf=$('#outputDirField'); if(odf) odf.style.display=ev?'none':'flex';
+  const adv=$('#advBox'); if(adv) adv.style.display=ev?'none':'block';
   const h=$('#evalModeHint');
   if(h) h.textContent = ev
     ? 'Run valutabile: alignment/diarizzazione dipendono dal preset; review + metrics sempre generati. Un file per run.'
@@ -861,7 +909,9 @@ function openAnalyze(){
   $('#closeModal').textContent='Chiudi';
   $('#analyzeOverlay').classList.remove('hidden');
   syncEvalMode();
+  updateAnalyzeEnabled();
 }
+document.addEventListener('input', e=>{ if(e.target && e.target.id==='optInputPath') updateAnalyzeEnabled(); });
 document.addEventListener('change', e=>{ if(e.target && e.target.id==='optEvalMode') syncEvalMode(); });
 function closeAnalyze(){
   if(AZ.timer){ clearInterval(AZ.timer); AZ.timer=null; }
@@ -885,7 +935,11 @@ function renderFileList(){
     const rm=el('span','rm','✕'); rm.title='Rimuovi'; rm.addEventListener('click',()=>{AZ.files.splice(i,1);renderFileList();});
     it.appendChild(rm); box.appendChild(it);
   });
-  $('#analyzeBtn').disabled = AZ.files.length===0;
+  updateAnalyzeEnabled();
+}
+function updateAnalyzeEnabled(){
+  const ip=($('#optInputPath')&&$('#optInputPath').value.trim())||'';
+  $('#analyzeBtn').disabled = (AZ.files.length===0 && !ip);
 }
 function humanSize(n){ if(n==null)return''; const u=['B','KB','MB','GB']; let i=0; while(n>=1024&&i<u.length-1){n/=1024;i++;} return n.toFixed(n<10&&i>0?1:0)+' '+u[i]; }
 
@@ -901,6 +955,15 @@ async function submitAnalyze(){
   fd.append('evaluation_mode', $('#optEvalMode').checked.toString());
   fd.append('export_review_packet', $('#optReview').checked.toString());
   fd.append('export_evaluation', $('#optEval').checked.toString());
+  fd.append('input_path', $('#optInputPath').value.trim());
+  fd.append('output_dir', $('#optOutputDir').value.trim());
+  fd.append('num_speakers', $('#optNumSpk').value.trim());
+  fd.append('min_speakers', $('#optMinSpk').value.trim());
+  fd.append('max_speakers', $('#optMaxSpk').value.trim());
+  fd.append('transcription_compute_type', $('#optCompute').value);
+  fd.append('normalized_audio_format', $('#optNaf').value);
+  fd.append('disable_transcription_cache', $('#optNoCache').checked.toString());
+  fd.append('force_normalization', $('#optForceNorm').checked.toString());
   for(const f of AZ.files) fd.append('files', f, f.name);
 
   $('#analyzeBtn').disabled=true; $('#analyzeBtn').textContent='Caricamento...';

@@ -138,6 +138,37 @@ All of these runs — plus everything already under `ExerPlazaSample/output/` an
 the project's `evaluations/` — appear in the session picker, so you can always
 re-open past runs, not only generate new ones.
 
+## Opening outputs from anywhere (incl. Docker)
+
+The picker auto-scans `evaluations/`, `ExerPlazaSample/output/` (where the Docker
+demo/full scripts also write), `artifacts/` and `tmp/`. For anything else:
+
+- **Apri da percorso…** (top bar) opens any `session.json` by absolute path,
+  even outside those folders. Audio is located by searching next to the JSON, so
+  replay works for Docker runs (whose recorded audio path is a container path
+  like `/sample/...`) and for outputs that were moved.
+- **Cartella…** registers an extra folder to scan; its runs then show in the
+  picker (useful for a custom Docker output mount or a colleague's folder).
+
+## Choosing input and output yourself (direct mode)
+
+In the analyze dialog with **Modalità valutazione OFF** you can, instead of the
+upload + fixed location:
+
+- **Percorso file locale** — point at a file already on disk (no upload/copy).
+- **Cartella output** — write the run wherever you want (`<dir>` for the JSON,
+  `<dir>_work` for artifacts). The result opens automatically and is added to the
+  picker.
+
+## Advanced options (direct mode)
+
+An **Opzioni avanzate** panel exposes the extra CLI flags that matter without
+turning the app into a control panel: speaker count hints
+(`--num/min/max-speakers`), `--transcription-compute-type`,
+`--normalized-audio-format`, disable transcription cache, force renormalization.
+Esoteric flags (evaluation labels/paths, alignment model/device) are
+intentionally left to the CLI.
+
 Notes:
 - The wrapper uses the project's `.venv` Python if present, otherwise the
   interpreter running the server. Heavy branches (alignment, diarization,

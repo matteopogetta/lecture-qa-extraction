@@ -315,6 +315,10 @@ This means the container supports:
 
 - `lecture-analyzer --help`
 - `lecture-analyzer --smoke --input /app/sample_data/example.mp4 --output-dir /app/tmp/cli-smoke-output`
+- the full local ML runtime used by the heavier pipeline branches, including
+  faster-whisper, WhisperX, SpeechBrain and sentence-transformers
 
-Docker is aligned with the current repository structure, while heavy optional
-runtime branches still depend on their own external libraries and models.
+Docker Compose mounts `./local_models` at `/app/local_models` so the
+`quality_local` speaker check activates automatically when the ECAPA model is
+present at `local_models/spkrec-ecapa-voxceleb`. Models are intentionally not
+copied into the Docker image.

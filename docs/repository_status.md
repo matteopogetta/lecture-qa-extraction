@@ -52,10 +52,13 @@ The Docker setup is aligned with the current repository shape:
 - it installs the `lecture-analyzer` CLI from `src/lecture_analyzer`
 - it supports `lecture-analyzer --help`
 - it supports the temporary smoke mode
+- it installs the heavier local ML runtime used by the full pipeline branches:
+  faster-whisper, WhisperX, SpeechBrain and sentence-transformers
+- it mounts `./local_models` into `/app/local_models` for local model reuse
 
-Docker is still not a promise that every heavy optional ML branch is available
-out of the box. Those branches continue to depend on their specific external
-libraries and models.
+Docker does not bake model weights into the image. Branches that require local
+models still need those models under `local_models/`, for example
+`local_models/spkrec-ecapa-voxceleb` for the QA speaker check.
 
 ## Local and non-essential materials
 

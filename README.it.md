@@ -111,7 +111,10 @@ Stato attuale:
 - `src/lecture_analyzer/analysis/speaker_role.py` esiste ancora, ma resta un
   modulo placeholder e
   non fa parte del flusso principale
-- Docker e allineato alla struttura attuale src-based
+- Docker e allineato alla struttura attuale src-based e include anche le
+  dipendenze ML pesanti; `docker-compose.yml` monta `./local_models` in
+  `/app/local_models`, quindi lo speaker check si attiva se il modello ECAPA
+  locale e' presente
 
 Documenti utili di stato:
 

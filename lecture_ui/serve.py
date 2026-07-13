@@ -55,6 +55,31 @@ SAMPLE_OUTPUT_DIR = SAMPLE_ROOT / "output"
 
 # Roots the server is allowed to read session JSON / serve audio from.
 ALLOWED_ROOTS = [PROJECT_ROOT, SAMPLE_ROOT]
+# Extra folders added at runtime (open-by-path / add-folder) for outputs that
+# live outside the project & sample trees (custom Docker mounts, shared files).
+_EXTRA_ROOTS: list[Path] = []
+
+
+def _all_roots() -> list[Path]:
+    return [*ALLOWED_ROOTS, *_EXTRA_ROOTS]
+
+
+def _register_root(path: Path) -> None:
+    try:
+        rp = path.resolve()
+    except OSError:
+        return
+    if not rp.is_dir():
+        return
+    if any(rp == r.resolve() for r in _EXTRA_ROOTS):
+        return
+    # skip if already covered by a base root
+    for base in ALLOWED_ROOTS:
+        try:
+            rp.relative_to(base.resolve()); return
+        except ValueError:
+            continue
+    _EXTRA_ROOTS.append(rp)
 
 # Directory / filename patterns that indicate pipeline sidecar artifacts
 # (not standalone session outputs) so discovery can skip them.
@@ -76,7 +101,7 @@ def _looks_like_sidecar(path: Path) -> bool:
 
 def _under_allowed_root(path: Path) -> bool:
     rp = path.resolve()
-    for root in ALLOWED_ROOTS:
+    for root in _all_roots():
         try:
             rp.relative_to(root.resolve())
             return True
@@ -167,6 +192,22 @@ def _build_command(input_paths, output_dir: Path, work_dir: Path, opts: dict) ->
         cmd += ["--enable-diarization"]
     if _as_bool(opts.get("from_scratch")):
         cmd += ["--from-scratch"]
+    for flag, key in (("--num-speakers", "num_speakers"),
+                      ("--min-speakers", "min_speakers"),
+                      ("--max-speakers", "max_speakers")):
+        val = (opts.get(key) or "").strip()
+        if val.isdigit():
+            cmd += [flag, val]
+    cct = (opts.get("transcription_compute_type") or "").strip()
+    if cct and cct != "auto":
+        cmd += ["--transcription-compute-type", cct]
+    naf = (opts.get("normalized_audio_format") or "").strip()
+    if naf and naf != "wav":
+        cmd += ["--normalized-audio-format", naf]
+    if _as_bool(opts.get("disable_transcription_cache")):
+        cmd += ["--disable-transcription-cache"]
+    if _as_bool(opts.get("force_normalization")):
+        cmd += ["--force-normalization"]
     if _as_bool(opts.get("export_review_packet")):
         cmd += ["--export-ai-review-packet"]
     if _as_bool(opts.get("export_evaluation")):
@@ -184,7 +225,7 @@ def _build_batch_command(input_path: Path, opts: dict) -> list[str]:
     script = PROJECT_ROOT / "scripts" / "run_evaluation_batch.py"
     cmd = [
         py, str(script),
-        "--input-dir", str(SAMPLE_INPUT_DIR),
+        "--input-dir", str(input_path.parent),
         "--pattern", input_path.name,
         "--profiles", (opts.get("pipeline_profile") or "quality_local"),
         "--segmentation-mode", (opts.get("segmentation_mode") or "structural"),
@@ -317,7 +358,20 @@ def _place_inputs(files: list[Path]) -> list[Path]:
 
 
 def start_analysis(fields: dict, files: list[Path]) -> str:
-    input_paths = _place_inputs(files)
+    # Input: either a local server-side path the user typed, or uploaded files.
+    input_path_field = (fields.get("input_path") or "").strip()
+    if input_path_field:
+        ip = Path(input_path_field).expanduser()
+        if not ip.is_file():
+            raise ValueError("File di input non trovato: " + str(ip))
+        input_paths = [ip]
+        for f in files:
+            try:
+                f.unlink()
+            except OSError:
+                pass
+    else:
+        input_paths = _place_inputs(files)
     if not input_paths:
         raise ValueError("Nessun file di input ricevuto.")
     evaluation_mode = _as_bool(fields.get("evaluation_mode"))
@@ -334,18 +388,26 @@ def start_analysis(fields: dict, files: list[Path]) -> str:
             "started": started,
         }
     else:
-        # Direct main.py wrapper -> ExerPlazaSample/output/<label>/.
-        sid = (fields.get("session_id") or "").strip()
-        label = _unique_label(sid if sid else input_paths[0].stem)
-        output_dir = SAMPLE_OUTPUT_DIR / label
-        work_dir = SAMPLE_OUTPUT_DIR / f"{label}_work"
+        # Direct main.py wrapper. Output goes to a user-chosen folder if given,
+        # otherwise to ExerPlazaSample/output/<label>/.
+        out_field = (fields.get("output_dir") or "").strip()
+        if out_field:
+            output_dir = Path(out_field).expanduser()
+            work_dir = Path(str(output_dir) + "_work")
+        else:
+            sid = (fields.get("session_id") or "").strip()
+            label = _unique_label(sid if sid else input_paths[0].stem)
+            output_dir = SAMPLE_OUTPUT_DIR / label
+            work_dir = SAMPLE_OUTPUT_DIR / f"{label}_work"
         output_dir.mkdir(parents=True, exist_ok=True)
         work_dir.mkdir(parents=True, exist_ok=True)
+        _register_root(output_dir)
+        _register_root(output_dir.parent)
         cmd = _build_command(input_paths, output_dir, work_dir, fields)
         job = {
             "status": "running", "stages": {}, "log": [],
             "mode": "direct", "session_dir": str(output_dir), "cmd": cmd,
-            "label": label, "input_stem": input_paths[0].stem,
+            "label": output_dir.name, "input_stem": input_paths[0].stem,
             "input_paths": [str(p) for p in input_paths],
             "output_path": None, "error": None, "returncode": None,
             "started": started,
@@ -419,6 +481,11 @@ def discover_sessions() -> list[dict]:
         for path in SAMPLE_OUTPUT_DIR.rglob("*.json"):
             if not _looks_like_sidecar(path):
                 add(path, "sample")
+    for root in _EXTRA_ROOTS:
+        if root.is_dir():
+            for path in root.rglob("*.json"):
+                if not _looks_like_sidecar(path):
+                    add(path, "extra")
 
     def worker(item):
         path, origin = item
@@ -587,11 +654,30 @@ def resolve_audio_file(raw_path: str) -> Path | None:
     return None
 
 
-def resolve_session_audio(data: dict) -> Path | None:
-    for raw in _session_audio_paths(data):
+def resolve_session_audio(data: dict, session_path: Path | None = None) -> Path | None:
+    raws = _session_audio_paths(data)
+    for raw in raws:
         found = resolve_audio_file(raw)
         if found is not None:
             return found
+    # Fallback: search for the recorded basename near the session file. This
+    # recovers audio for Docker runs (paths like /sample/... or /app/...) and
+    # for outputs that were moved, where the absolute path no longer resolves.
+    if session_path is not None:
+        names = [Path(r.replace("\\", "/")).name for r in raws if r]
+        search_roots = [session_path.parent, session_path.parent.parent]
+        seen = set()
+        for base in search_roots:
+            key = str(base.resolve()) if base else ""
+            if not base or key in seen or not base.is_dir():
+                continue
+            seen.add(key)
+            for name in names:
+                if not name:
+                    continue
+                for cand in base.rglob(name):
+                    if cand.is_file() and cand.suffix.lower() in AUDIO_EXTS:
+                        return cand
     return None
 
 
@@ -903,6 +989,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._api_analyze_status(qs)
         if route == "/api/cold_reference":
             return self._api_cold_reference(qs)
+        if route == "/api/open":
+            return self._api_open(qs)
+        if route == "/api/add_folder":
+            return self._api_add_folder(qs)
         return self._send_error_json(HTTPStatus.NOT_FOUND, "not found")
 
     def do_POST(self):
@@ -914,19 +1004,17 @@ class Handler(BaseHTTPRequestHandler):
     do_HEAD = do_GET
 
     # -- endpoints --------------------------------------------------------
-    def _api_session(self, qs):
-        raw = (qs.get("path") or [""])[0]
-        path = self._validated_session_path(raw)
-        if path is None:
-            return self._send_error_json(
-                HTTPStatus.BAD_REQUEST, "invalid or missing session path"
-            )
+    def _session_response(self, path: Path):
         data = _safe_load_json(path)
         if not isinstance(data, dict):
             return self._send_error_json(
                 HTTPStatus.UNPROCESSABLE_ENTITY, "could not parse session json"
             )
-        audio = resolve_session_audio(data)
+        # make the session's own folder (and its parent, for sibling _work dirs)
+        # readable so its audio can be located and served.
+        _register_root(path.parent)
+        _register_root(path.parent.parent)
+        audio = resolve_session_audio(data, path)
         audio_url = None
         audio_exists = False
         if audio is not None:
@@ -940,6 +1028,46 @@ class Handler(BaseHTTPRequestHandler):
                 "session_path": str(path.resolve()),
             }
         )
+
+    def _api_session(self, qs):
+        raw = (qs.get("path") or [""])[0]
+        path = self._validated_session_path(raw)
+        if path is None:
+            return self._send_error_json(
+                HTTPStatus.BAD_REQUEST, "invalid or missing session path"
+            )
+        return self._session_response(path)
+
+    def _api_open(self, qs):
+        raw = (qs.get("path") or [""])[0].strip()
+        if not raw:
+            return self._send_error_json(HTTPStatus.BAD_REQUEST, "percorso mancante")
+        p = Path(raw).expanduser()
+        if not p.is_absolute():
+            p = (PROJECT_ROOT / p)
+        if not (p.is_file() and p.suffix.lower() == ".json"):
+            return self._send_error_json(HTTPStatus.NOT_FOUND, "file .json non trovato")
+        data = _safe_load_json(p)
+        if not isinstance(data, dict) or (
+            "qa_candidates" not in data and "sentences" not in data
+        ):
+            return self._send_error_json(
+                HTTPStatus.UNPROCESSABLE_ENTITY,
+                "il file non sembra un session.json della pipeline",
+            )
+        _register_root(p.parent)
+        _register_root(p.parent.parent)
+        return self._session_response(p)
+
+    def _api_add_folder(self, qs):
+        raw = (qs.get("path") or [""])[0].strip()
+        if not raw:
+            return self._send_error_json(HTTPStatus.BAD_REQUEST, "percorso mancante")
+        p = Path(raw).expanduser()
+        if not p.is_dir():
+            return self._send_error_json(HTTPStatus.NOT_FOUND, "cartella non trovata")
+        _register_root(p)
+        return self._send_json({"added": str(p.resolve()), "sessions": discover_sessions()})
 
     def _api_cold_reference(self, qs):
         raw = (qs.get("path") or [""])[0]
@@ -982,9 +1110,10 @@ class Handler(BaseHTTPRequestHandler):
                 HTTPStatus.BAD_REQUEST, "errore parsing upload: %s" % exc
             )
         files = [f for f in files if f.suffix.lower() in INPUT_EXTS and f.stat().st_size > 0]
-        if not files:
+        if not files and not (fields.get("input_path") or "").strip():
             return self._send_error_json(
-                HTTPStatus.BAD_REQUEST, "nessun file audio/video valido caricato"
+                HTTPStatus.BAD_REQUEST,
+                "nessun file audio/video caricato n\u00e9 percorso di input indicato",
             )
         try:
             job_id = start_analysis(fields, files)

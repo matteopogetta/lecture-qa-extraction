@@ -110,9 +110,17 @@ docker compose run --rm \
   --segmentation-mode structural
 ```
 
+### Optional local speaker model
+
+The Docker image includes SpeechBrain and Compose mounts the repository
+`local_models/` directory into `/app/local_models`. If the ECAPA model exists at
+`local_models/spkrec-ecapa-voxceleb`, `quality_local` can use the QA speaker
+check and speaker-assisted rescue inside Docker. Model weights are not copied
+into the image.
+
 ### Optional experimental diarization
 
-If you want to explore the heavier speaker branch, add:
+If you want to explore the heavier diarization branch, add:
 
 ```bash
 --enable-diarization
